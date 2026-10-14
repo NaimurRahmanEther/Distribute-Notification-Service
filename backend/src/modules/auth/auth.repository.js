@@ -32,7 +32,7 @@ async function createUser({ fullName, email, passwordHash }) {
     passwordHash,
   ]);
 
-  return rows[0];
+  return rows[0] || null;
 }
 
 async function findById(userId) {

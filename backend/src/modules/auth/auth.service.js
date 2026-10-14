@@ -10,7 +10,7 @@ function hashRefreshToken(token) {
   return crypto.createHash("sha256").update(token).digest("hex");
 }
 
-function createAccessToken(user, sessionId) {
+function   createAccessToken(user, sessionId) {
   return jwt.sign(
     {
       sub: String(user.id),
