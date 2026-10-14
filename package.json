@@ -4,8 +4,10 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "dev":"nodemon src/server.js",
-    "start":"node src/server.js",
+    "dev": "nodemon src/server.js",
+    "start": "node src/server.js",
+    "migrate:up": "node src/database/migrate.js",
+    "migrate:down": "node src/database/migrate.js down",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
@@ -15,6 +17,7 @@
   "dependencies": {
     "bcrypt": "^6.0.0",
     "bullmq": "^6.3.13",
+    "cookie-parser": "^1.4.7",
     "cors": "^2.8.6",
     "dotenv": "^18.0.7",
     "express": "^5.3.0",
