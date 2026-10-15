@@ -1,10 +1,35 @@
 # Notification Service
 
-Express and PostgreSQL backend with JWT authentication and database-backed sessions. This document describes the authentication behavior currently implemented in the service.
+Express and PostgreSQL backend with JWT authentication, database-backed sessions, and Redis-backed authentication rate limits. Async controllers and authentication middleware forward errors through a shared async handler.
 
 ## Getting started
 
-Run commands from the `backend` directory. Install dependencies, configure a local `.env` file, apply migrations to a new database, and start the server:
+### Docker Compose
+
+Run these commands from the repository root, which contains `compose.yml`. Docker must be running. If you do not already have a root `.env`, copy the example using PowerShell:
+
+```powershell
+Copy-Item .env.example .env
+docker compose up --build -d
+```
+
+Review `.env` before starting. The example credentials and token secrets are for local testing. Compose builds the backend, starts PostgreSQL 16 and Redis 7, waits for both health checks, then runs migrations before starting the API. The default API address is `http://localhost:8000`.
+
+```sh
+docker compose ps
+docker compose logs -f backend
+docker compose down
+```
+
+PostgreSQL data persists in the `postgres_data` volume when the stack is stopped with `docker compose down`. Adding `--volumes` deletes that database volume and its data. Redis has no configured persistent volume; do not rely on rate-limit counters surviving container replacement.
+
+Compose reads the root `.env` and explicitly passes the variables listed in its `environment` sections. It does not load `backend/.env`. Inside containers, use `postgres` and `redis` as the database and Redis hostnames. Their ports are not published to the host by this Compose file. The backend `.dockerignore` excludes local `.env` files and `node_modules` from the image.
+
+### Run the backend directly
+
+Start reachable PostgreSQL and Redis services first. From `backend`, copy `.env.example` to `.env` if needed. Set `DATABASE_URL`, `REDIS_HOST`, `REDIS_PORT`, separate `ACCESS_TOKEN_SECRET` and `REFRESH_TOKEN_SECRET` values, and `REFRESH_COOKIE_SECURE=false` for local HTTP. The backend example does not include the token secrets; add them before logging in. For services running on your computer, use `localhost` instead of the Compose service names.
+
+Run commands from the `backend` directory:
 
 ```sh
 npm install
@@ -15,6 +40,34 @@ npm run dev
 The server checks the PostgreSQL connection before listening. Its default address is `http://localhost:8000`; `GET /health` provides a basic application health response.
 
 The migration runner records completed migrations in `schema_migrations`. Editing a migration that has already been applied does not rerun it or update an existing table. Existing installations must reconcile their schema and migration history before relying on the corrected migration files. `npm run migrate:down` rolls back the most recent migration; the current rollback files drop their respective tables and data.
+
+On PowerShell systems that block `npm.ps1`, use `npm.cmd` in place of `npm`.
+
+## Authentication rate limits
+
+The routes use `express-rate-limit` with `rate-limit-redis` and a shared `ioredis` connection. Each route has its own Redis prefix and fixed-window counter per client IP, with the library's default IPv6 subnet handling. The window begins on the first counted request; subsequent requests do not extend it. All requests count, including successful requests and validation failures.
+
+| Route | Limit | Window | Redis prefix |
+| --- | --- | --- | --- |
+| Register | 5 | 15 minutes | `notification-service:rate:register:` |
+| Login | 10 | 15 minutes | `notification-service:rate:login:` |
+| Refresh | 30 | 1 minute | `notification-service:rate:refresh:` |
+| Logout | 30 | 1 minute | `notification-service:rate:logout:` |
+
+Change these settings in [`auth.rate-limit.js`](src/modules/auth/auth.rate-limit.js). [`auth.routes.js`](src/modules/auth/auth.routes.js) attaches each limiter before validation and controller execution. Account-based failed-login throttling is not implemented.
+
+Exceeded limits return `429` with `Retry-After` and this response:
+
+```json
+{
+  "success": false,
+  "message": "Too many requests. Please try again later."
+}
+```
+
+Standard rate-limit headers are enabled; legacy `X-RateLimit-*` headers are disabled. If Redis operations fail, register, login, and refresh forward the error to the central error handler, which currently returns `500`. Logout uses `passOnStoreError: true`, allowing logout to proceed when its Redis store fails; it still enforces its limit when Redis is available.
+
+The Redis client has two-second connection and command timeouts and one retry per request. Use the same Redis service across backend instances to share counters. If deployed behind a reverse proxy, configure Express's trusted proxies to match that deployment so client IP identification is correct.
 
 ## Authentication overview
 
@@ -247,12 +300,15 @@ No join or composite user/session index is required by the current lookup. Expir
 
 ## Configuration
 
-Configuration is loaded from environment variables through `dotenv`.
+Configuration is loaded from environment variables through `dotenv`. Direct backend execution reads `backend/.env` when started from that directory. Compose uses the repository-root `.env` for interpolation; only variables explicitly mapped in `compose.yml` reach the containers. To customize optional token durations or cookie settings in Docker, also add their mappings to the backend service's `environment` section.
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `DATABASE_URL` | None | PostgreSQL connection string |
 | `PORT` | `8000` | HTTP server port |
+| `NODE_ENV` | `development` | Runtime environment |
+| `REDIS_HOST` | `localhost` | Redis hostname; `redis` in Compose |
+| `REDIS_PORT` | `6379` | Redis connection port |
 | `ACCESS_TOKEN_SECRET` | None | Access-token signing and verification secret |
 | `REFRESH_TOKEN_SECRET` | None | Refresh-token signing and verification secret |
 | `ACCESS_TOKEN_EXPIRES_IN` | `1d` | Access-token lifetime |
@@ -262,11 +318,15 @@ Configuration is loaded from environment variables through `dotenv`.
 | `REFRESH_COOKIE_SAME_SITE` | `strict` | Cookie SameSite policy |
 | `REFRESH_COOKIE_PATH` | `/api/v1/auth` | Cookie path, shared by login, refresh, and logout |
 
+Compose also requires `POSTGRES_USER`, `POSTGRES_PASSWORD`, and `POSTGRES_DB` in the root `.env`. These initialize PostgreSQL on its first startup with an empty data volume. Keep them consistent with `DATABASE_URL`; URL-encode special characters in its credentials. Changing those initialization variables does not update an existing database user's password. Both `.env` files are excluded from Git; share `.env.example` files instead.
+
 Set separate signing secrets and a valid database connection before using authentication. Duration values should include units, such as `15m`, `1d`, or `7d`.
 
 For local development over plain HTTP, set `REFRESH_COOKIE_SECURE=false`. Use `true` for HTTPS deployment. The default SameSite policy is `strict`; cross-site cookie flows require a deployment-specific configuration. The cookie path must cover the refresh and logout endpoints for the browser to send the cookie to them.
 
 ## Error responses
+
+[`async-handler.js`](src/shared/utils/async-handler.js) wraps all four auth controllers and the authentication middleware. It forwards synchronous exceptions and rejected promises to `next(error)`, so repeated controller-level `try/catch` blocks are unnecessary. Service-specific error translation and database transaction rollback still use their own error handling.
 
 Errors use the shared response envelope:
 
@@ -284,13 +344,18 @@ Validation responses also include an `errors` object containing field errors.
 | `400` | Registration or login input validation failed |
 | `401` | Incorrect credentials, missing/malformed Bearer header, invalid or expired token, missing/revoked/expired session, or refresh-token hash mismatch |
 | `409` | Email address already registered |
-| `500` | Unexpected server or database failure; response message is `Internal server error` |
+| `429` | Authentication route rate limit exceeded |
+| `500` | Unexpected server, database, or rate-limit store failure; response message is `Internal server error` |
 
 ## Code organization
 
 | File | Responsibility |
 | --- | --- |
 | [`auth.routes.js`](src/modules/auth/auth.routes.js) | Authentication endpoint registration |
+| [`auth.rate-limit.js`](src/modules/auth/auth.rate-limit.js) | Auth limiter prefixes, limits, windows, and outage policy |
+| [`rate-limit.middleware.js`](src/middleware/rate-limit.middleware.js) | Reusable Redis-backed limiter factory |
+| [`redis.js`](src/config/redis.js) | Shared Redis connection |
+| [`async-handler.js`](src/shared/utils/async-handler.js) | Central async request-handler wrapper |
 | [`auth.validation.js`](src/modules/auth/auth.validation.js) | Registration and login body validation |
 | [`auth.controller.js`](src/modules/auth/auth.controller.js) | HTTP responses and refresh-cookie handling |
 | [`auth.service.js`](src/modules/auth/auth.service.js) | Password checks, JWT issuance/verification, and authentication rules |
@@ -307,4 +372,4 @@ Run the existing authentication tests from the backend directory:
 node node_modules/jest/bin/jest.js src/modules/auth/auth.test.js src/middleware/auth.middleware.test.js --runInBand
 ```
 
-The tests cover registration, session-ID persistence during login, cookie-based logout, refresh-token acceptance and rejection, Bearer-header validation, identity forwarding, and middleware error handling. Service tests mock database access; middleware tests mock the auth service. They do not validate a live PostgreSQL migration or browser cookie/CORS behavior. The `npm test` script is currently a placeholder; use the command above.
+The tests cover registration, session-ID persistence during login, cookie-based logout, refresh-token acceptance and rejection, Bearer-header validation, identity forwarding, and middleware error handling. Service tests mock database access; middleware tests mock the auth service. They do not validate live PostgreSQL migrations, Redis rate limits, Docker startup, or browser cookie/CORS behavior. The `npm test` script is currently a placeholder; use the command above.
