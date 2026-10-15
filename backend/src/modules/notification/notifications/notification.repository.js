@@ -1,7 +1,7 @@
-const { pool } = require("../../config/db");
+const { pool } = require("../../../config/db");
 
-async function create({ id, userId, type, title, message, data = {} }) {
-  const { rows } = await pool.query(
+async function create({ id, userId, type, title, message, data = {} }, db = pool) {
+  const { rows } = await db.query(
     `INSERT INTO notifications (id, user_id, type, title, message, data)
      VALUES ($1, $2, $3, $4, $5, $6::jsonb)
      RETURNING *`,

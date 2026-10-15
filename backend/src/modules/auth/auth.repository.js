@@ -35,8 +35,8 @@ async function createUser({ fullName, email, passwordHash }) {
   return rows[0] || null;
 }
 
-async function findById(userId) {
-  const { rows } = await pool.query(
+async function findById(userId, db = pool) {
+  const { rows } = await db.query(
     `SELECT id, user_role FROM users WHERE id = $1`,
     [userId]
   );

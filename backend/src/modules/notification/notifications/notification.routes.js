@@ -1,5 +1,5 @@
 const express = require("express");
-const authenticate = require("../../middleware/auth.middleware");
+const authenticate = require("../../../middleware/auth.middleware");
 const controller = require("./notification.controller");
 const validation = require("./notification.validation");
 

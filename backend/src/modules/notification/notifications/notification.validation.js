@@ -1,5 +1,5 @@
 const { z } = require("zod");
-const AppError = require("../../shared/errors/AppError");
+const AppError = require("../../../shared/errors/AppError");
 
 // Notification types
 const notificationType = z.enum([
@@ -24,8 +24,7 @@ const listSchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(20),
 
   unreadOnly: z.enum(["true", "false"])
-    .default("false")
-    .transform(v => v === "true"),
+    .default("false"),
 
   type: notificationType.optional(),
 }).strict();
@@ -54,6 +53,7 @@ const validate = (schema, source = "body") => (req, res, next) => {
 };
 
 module.exports = {
+  createSchema,
   validateCreate: validate(createSchema),
   validateList: validate(listSchema, "query"),
   validateId: validate(idSchema, "params"),

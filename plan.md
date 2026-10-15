@@ -22,14 +22,14 @@ Choose delivery channels based on user activity, preferences, notification impor
 
 - Authentication and Redis-backed rate limiting are implemented.
 - Docker Compose contains backend, PostgreSQL, and Redis services.
-- BullMQ is installed; delivery queues and workers are not implemented yet.
+- BullMQ is installed; delivery queues and workers are not implemented yet. Phase 2 transaction orchestration and unpublished outbox event creation are implemented.
 - The user reports completing the notification migration.
-- Notification repository, service, controller, routes, and validation are implemented under `backend/src/modules/notificaitons/` (current folder spelling).
+- Notification, delivery, and preference files are organized under `backend/src/modules/notification/notifications/`, `backend/src/modules/notification/deliveries/`, and `backend/src/modules/notification/preferences/`. Each module contains its repository, service, controller, routes, and validation.
 - Notification routes are registered at `/api/v1/notifications`.
 - Listing uses a simple row query and a separate count query, without JSON aggregation. Concurrent writes can cause a small difference between the count and page results.
 - Notification creation is currently a self-only demonstration endpoint. The recipient comes from the authenticated session.
 - Latest verification: 35 mocked API/repository checks passed, plus JavaScript syntax checks. Tests were aligned with the current optional, unrestricted JSON metadata schema. Test files were removed afterward at the user's request. Docker was unavailable, so live PostgreSQL integration remains unverified.
-- Live database integration, migration rollback, and authentication/rate-limit regression coverage have not been verified in this work. The package's `npm test` script was a placeholder at last inspection.
+- Phase 2 verification: 16 mocked transaction/API checks and 9 real PostgreSQL integration checks passed. Migration up/down/up was verified in an isolated schema, then migrations 004–006 were applied to the local development database. The temporary schema was removed and no test files were retained. Full authentication/rate-limit regression coverage remains unverified; the package's `npm test` script is still a placeholder.
 
 ## Delivery policy
 
@@ -107,6 +107,8 @@ Completion checks:
 - Establish runnable tests and verify existing auth/rate-limit behavior.
 
 ## Phase 2 — Delivery tracking, preferences, and transactional outbox
+
+Status: complete for Phase 2 scope. See `docs/phase-2.md` for behavior, internal authorization, verification, and limits. Initial intent uses the first enabled channel in IN_APP → PUSH → EMAIL order; activity-aware selection and provider execution belong to later phases.
 
 Deliverables:
 

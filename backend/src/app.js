@@ -3,7 +3,9 @@ const cors = require("cors");
 const helmet = require("helmet");
 const cookieParser = require("cookie-parser");
 const authRoutes = require("./modules/auth/auth.routes");
-const notificationRoutes = require("./modules/notificaitons/notification.routes");
+const notificationRoutes = require("./modules/notification/notifications/notification.routes");
+const deliveryRoutes = require("./modules/notification/deliveries/notification-delivery.routes");
+const preferenceRoutes = require("./modules/notification/preferences/notification-preference.routes");
 const notFound = require("./middleware/not-found");
 const errorHandler = require("./middleware/errorHandler");
 const { successResponse } = require("./shared/utils/api-response");
@@ -27,6 +29,8 @@ app.get("/health", (req, res) => {
 // Register API routes before the not-found and error handlers.
 app.use("/api/v1/auth", authRoutes);
 app.use("/api/v1/notifications", notificationRoutes);
+app.use("/api/v1/notification-deliveries", deliveryRoutes);
+app.use("/api/v1/notification-preferences", preferenceRoutes);
 app.use(notFound);
 app.use(errorHandler);
 

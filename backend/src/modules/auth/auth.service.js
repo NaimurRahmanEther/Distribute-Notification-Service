@@ -5,6 +5,17 @@ const crypto = require("crypto");
 const env = require("../../config/env");
 const authRepository = require("./auth.repository");
 const AppError = require("../../shared/errors/AppError");
+const { z } = require("zod");
+
+const sessionClaimsSchema = z.object({
+  sub: z.string().regex(/^[1-9]\d*$/).max(19),
+  sid: z.string().uuid(),
+});
+
+function hasValidSessionClaims(payload) {
+  const result = sessionClaimsSchema.safeParse(payload);
+  return result.success && BigInt(result.data.sub) <= 9223372036854775807n;
+}
 
 function hashRefreshToken(token) {
   return crypto.createHash("sha256").update(token).digest("hex");
@@ -138,7 +149,7 @@ async function refresh(refreshToken) {
     throw new AppError("Invalid or expired refresh token", 401);
   }
 
-  if (payload.type !== "refresh" || !payload.sub || !payload.sid) {
+  if (payload.type !== "refresh" || !hasValidSessionClaims(payload)) {
     throw new AppError("Invalid refresh token", 401);
   }
 
@@ -181,8 +192,7 @@ async function logout(refreshToken) {
 
   if (
     payload.type !== "refresh" ||
-    !payload.sub ||
-    !payload.sid
+    !hasValidSessionClaims(payload)
   ) {
     return;
   }
@@ -211,8 +221,7 @@ async function authenticateAccessToken(accessToken) {
 
   if (
     payload.type !== "access" ||
-    !payload.sub ||
-    !payload.sid
+    !hasValidSessionClaims(payload)
   ) {
     throw new AppError("Invalid access token", 401);
   }
