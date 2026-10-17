@@ -4,14 +4,13 @@
 
 `POST /api/v1/notifications` still creates a notification for the authenticated user only. The service now uses one PostgreSQL client and transaction to:
 
-1. Verify the recipient exists.
-2. Read that recipient's channel preferences.
-3. Insert the notification.
-4. Select at most one initial channel and insert its delivery record.
-5. Insert a `DELIVERY_REQUESTED` outbox event containing IDs, channel, stage, payload version, and a stable delivery idempotency key.
-6. Commit all writes together, or roll them all back on failure.
+1. Read the recipient's channel preferences.
+2. Insert the notification; its foreign key enforces recipient existence.
+3. Select at most one initial channel and insert its delivery record.
+4. Insert a `DELIVERY_REQUESTED` outbox event containing IDs, channel, stage, payload version, and a stable delivery idempotency key.
+5. Commit all writes together, or roll them all back on failure.
 
-No Redis connection or external provider is needed for this operation. The response remains HTTP 201 with `data.notification`. Outbox records remain unpublished until the Phase 3 dispatcher is implemented.
+No Redis connection or external provider is needed for this operation. The response remains HTTP 201 with `data.notification`. Outbox records remain unpublished until the separate Phase 3 dispatcher processes them.
 
 ## Current channel policy
 
@@ -44,7 +43,7 @@ Preference updates affect only the authenticated user. Delivery reads enforce ow
 
 ## Trusted internal creation
 
-`notification.service.createForRecipient(userId, input, authorizeRecipient)` is an in-process backend API, not an HTTP endpoint. The trusted caller supplies an existing database user ID. The service checks that an ID was provided, validates the notification body, and requires `authorizeRecipient(userId)` to return exactly `true` before starting database work. It checks recipient existence in the transaction; malformed IDs are left to PostgreSQL's type validation.
+`notification.service.createForRecipient(userId, input, authorizeRecipient)` is an in-process backend API, not an HTTP endpoint. The trusted caller supplies an existing database user ID. The service checks that an ID was provided, validates the notification body, and requires `authorizeRecipient(userId)` to return exactly `true` before starting database work. The notification foreign key checks recipient existence in the transaction; malformed IDs are left to PostgreSQL's type validation.
 
 The calling domain service supplies this callback using verified actor/event permissions. Never derive it from a request-body role or an unverified claim, and do not expose a generic endpoint that always supplies `true`. This callback makes the authorization boundary explicit; it is not a sandbox against trusted server code. No admin role or external service credential is invented by this implementation.
 
@@ -56,7 +55,7 @@ This method owns its transaction. It cannot yet atomically commit a message/orde
 - `backend/src/modules/notification/notifications/notification.policy.js`: initial channel selection.
 - `backend/src/modules/notification/deliveries/`: internal creation and owned delivery reads.
 - `backend/src/modules/notification/preferences/`: preference defaults and updates.
-- `backend/src/modules/notification/outbox/`: internal validated event creation and repository.
+- `backend/src/modules/notification/outbox/`: internal event construction and repository.
 - Migrations `004`–`006`: deliveries, preferences, and outbox.
 
 Outbox has no user-facing controller or routes because publication is an internal dispatcher responsibility.

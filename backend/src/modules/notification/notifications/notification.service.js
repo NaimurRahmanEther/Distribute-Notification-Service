@@ -1,6 +1,5 @@
 const { randomUUID } = require("node:crypto");
 const repository = require("./notification.repository");
-const authRepository = require("../../auth/auth.repository");
 const AppError = require("../../../shared/errors/AppError");
 const { pool } = require("../../../config/db");
 const { createSchema } = require("./notification.validation");
@@ -10,25 +9,24 @@ const outbox = require("../outbox/notification-outbox.service");
 const { selectInitialChannel } = require("./notification.policy");
 
 function requireNotification(notification) {
-  if (!notification) throw new AppError("Notification not found", 404);
+  if (!notification) {
+    throw new AppError("Notification not found", 404);
+  }
   return notification;
 }
 
 async function persistNotification(userId, input, missingStatus) {
-  const parsed = createSchema.safeParse(input);
-  if (!parsed.success) {
-    throw new AppError("Validation failed", 400, parsed.error.flatten().fieldErrors);
-  }
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    const user = await authRepository.findById(userId, client);
-    if (!user) throw new AppError("User no longer exists", missingStatus);
     const settings = await preferences.getMine(userId, client);
     const notification = await repository.create({
       id: randomUUID(),
       userId,
-      ...parsed.data,
+      type: input.type,
+      title: input.title,
+      message: input.message,
+      data: input.data,
     }, client);
 
     const channel = selectInitialChannel(settings);
@@ -52,6 +50,7 @@ async function persistNotification(userId, input, missingStatus) {
 }
 
 async function createForSelf(userId, input) {
+  // HTTP input has already passed validateCreate in the route.
   return persistNotification(userId, input, 401);
 }
 
@@ -69,7 +68,12 @@ async function createForRecipient(userId, input, authorizeRecipient) {
   if (allowed !== true) {
     throw new AppError("Not authorized to notify this recipient", 403);
   }
-  return persistNotification(userId, input, 404);
+  // Internal callers do not pass through HTTP validation.
+  const parsed = createSchema.safeParse(input);
+  if (!parsed.success) {
+    throw new AppError("Validation failed", 400, parsed.error.flatten().fieldErrors);
+  }
+  return persistNotification(userId, parsed.data, 404);
 }
 
 async function listMine(userId, filters) {

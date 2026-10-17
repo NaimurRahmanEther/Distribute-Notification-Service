@@ -1,5 +1,5 @@
 const { z } = require("zod");
-const AppError = require("../../../shared/errors/AppError");
+const validate = require("../../../middleware/validate");
 
 // PUT replaces the complete set, so all three booleans are required.
 const updateSchema = z.object({
@@ -8,16 +8,4 @@ const updateSchema = z.object({
   PUSH: z.boolean(),
 }).strict();
 
-function validateUpdate(req, res, next) {
-  const result = updateSchema.safeParse(req.body);
-  if (!result.success) {
-    return next(new AppError(
-      "Validation failed", 400, result.error.flatten().fieldErrors
-    ));
-  }
-  req.validated = req.validated || {};
-  req.validated.body = result.data;
-  next();
-}
-
-module.exports = { validateUpdate };
+module.exports = { validateUpdate: validate(updateSchema) };

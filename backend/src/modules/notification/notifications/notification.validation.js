@@ -1,5 +1,5 @@
 const { z } = require("zod");
-const AppError = require("../../../shared/errors/AppError");
+const validate = require("../../../middleware/validate");
 
 // Notification types
 const notificationType = z.enum([
@@ -24,7 +24,8 @@ const listSchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(20),
 
   unreadOnly: z.enum(["true", "false"])
-    .default("false"),
+    .default("false")
+    .transform(value => value === "true"),
 
   type: notificationType.optional(),
 }).strict();
@@ -33,24 +34,6 @@ const listSchema = z.object({
 const idSchema = z.object({
   id: z.string().uuid(),
 }).strict();
-
-// Common validation middleware
-const validate = (schema, source = "body") => (req, res, next) => {
-  const result = schema.safeParse(req[source]);
-
-  if (!result.success) {
-    return next(new AppError(
-      "Validation failed",
-      400,
-      result.error.flatten().fieldErrors
-    ));
-  }
-
-  req.validated ??= {};
-  req.validated[source] = result.data;
-
-  next();
-};
 
 module.exports = {
   createSchema,

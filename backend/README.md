@@ -128,7 +128,7 @@ Content-Type: application/json
 }
 ```
 
-Validation requires a trimmed name of 1–100 characters, a valid email of up to 255 characters, and a password with a JavaScript string length of 8–72. The password validation is a string-length check, not a UTF-8 byte-length check.
+Validation requires a trimmed name of 1–100 characters, a valid email of up to 255 characters, and a password with a JavaScript string length of 8–72. Validation also enforces bcrypt's 72-byte UTF-8 limit.
 
 The service trims and lowercases the email, checks for an existing account, hashes the password with bcrypt using cost factor 12, and inserts the user. The database assigns the default `user` role. Duplicate email addresses return `409`.
 
@@ -203,7 +203,7 @@ The identity has this shape:
 
 Errors are passed to the shared error handler. Missing or malformed Bearer credentials return `401`.
 
-The middleware exists but is not currently attached to any application route. The following is an integration example for a future router under `src/modules/<module>`; it does not represent an existing endpoint:
+The middleware protects notification, delivery, and preference routes. The following shows how another router can use it:
 
 ```js
 const authenticate = require("../../middleware/auth.middleware");
@@ -373,3 +373,15 @@ node node_modules/jest/bin/jest.js src/modules/auth/auth.test.js src/middleware/
 ```
 
 The tests cover registration, session-ID persistence during login, cookie-based logout, refresh-token acceptance and rejection, Bearer-header validation, identity forwarding, and middleware error handling. Service tests mock database access; middleware tests mock the auth service. They do not validate live PostgreSQL migrations, Redis rate limits, Docker startup, or browser cookie/CORS behavior. The `npm test` script is currently a placeholder; use the command above.
+
+## Code flow
+
+Routes attach authentication and validation, controllers read `req.validated.body/query/params`, services handle application rules, and repositories run SQL. `src/middleware/validate.js` is shared by auth and notification modules.
+
+Notification HTTP input is validated once at the route. Trusted internal recipient creation validates its own input because it bypasses HTTP. Delivery and outbox creation use internal values and the shared transaction client; database constraints enforce IDs, channels and stages. Worker payload validation remains at the queue boundary.
+
+Notification folders live under `src/modules/notification/`: `notifications`, `deliveries`, `preferences`, and `outbox`. See [Phase 2](../docs/phase-2.md) for endpoints and [Phase 3](../docs/phase-3.md) for running the dispatcher and worker.
+
+### Cleanup verification - October 17, 2026
+
+39 integration checks passed with real PostgreSQL in a temporary schema, Express, JWT and bcrypt. These covered migration up/down/up, authentication, request validation, ownership, unread filters, delivery defaults, atomic outbox creation and rollback, simulated publication, in-app processing, duplicate suppression, disabled channels and deletion. Rate limiting used an in-memory store and BullMQ publication was simulated; live Redis behavior was not verified in this run. The temporary schema was removed and no test files were retained. All 48 JavaScript source files passed syntax and local import checks.

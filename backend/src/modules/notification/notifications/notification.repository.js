@@ -16,7 +16,9 @@ async function listForUser(
 ) {
   const values = [userId];
   const conditions = ["user_id = $1"];
-  if (unreadOnly) conditions.push("read_at IS NULL");
+  if (unreadOnly) {
+    conditions.push("read_at IS NULL");
+  }
   if (type) {
     values.push(type);
     conditions.push(`type = $${values.length}`);

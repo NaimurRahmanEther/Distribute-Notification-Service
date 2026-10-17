@@ -1,4 +1,4 @@
-CREATE TABLE notification_preferences (
+CREATE TABLE IF NOT EXISTS notification_preferences (
     user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     channel VARCHAR(10) NOT NULL CHECK (channel IN ('IN_APP', 'EMAIL', 'PUSH')),
     enabled BOOLEAN NOT NULL,

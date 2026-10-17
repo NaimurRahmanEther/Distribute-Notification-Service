@@ -13,10 +13,9 @@ pool.on("error", (error) => {
 });
 
 async function testDatabaseConnection() {
-  const result = await pool.query("SELECT NOW() AS current_time");
+  await pool.query("SELECT 1");
 
   console.log("PostgreSQL connected successfully");
-
 }
 
 module.exports = {

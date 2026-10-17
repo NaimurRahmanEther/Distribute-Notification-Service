@@ -3,7 +3,7 @@ const { pool } = require("../../../config/db");
 // Pass a shared client to include this insert in the service transaction.
 async function create(
   { id, notificationId, channel, stage = "INITIAL", nextAttemptAt = null },
-  db = pool
+  db
 ) {
   const { rows } = await db.query(
     `INSERT INTO notification_deliveries (
@@ -15,40 +15,6 @@ async function create(
   );
 
   return rows[0];
-}
-
-// Internal lookups; user-facing callers must check notification ownership.
-async function findById(id, db = pool) {
-  const { rows } = await db.query(
-    `SELECT * FROM notification_deliveries WHERE id = $1`,
-    [id]
-  );
-
-  return rows[0] || null;
-}
-
-async function findByNotificationId(notificationId, db = pool) {
-  const { rows } = await db.query(
-    `SELECT * FROM notification_deliveries
-     WHERE notification_id = $1
-     ORDER BY created_at ASC, id ASC`,
-    [notificationId]
-  );
-
-  return rows;
-}
-
-async function findByNotificationAndChannel(
-  { notificationId, channel, stage = "INITIAL" },
-  db = pool
-) {
-  const { rows } = await db.query(
-    `SELECT * FROM notification_deliveries
-     WHERE notification_id = $1 AND channel = $2 AND stage = $3`,
-    [notificationId, channel, stage]
-  );
-
-  return rows[0] || null;
 }
 
 // Public reads enforce ownership and omit provider/internal error details.
@@ -81,7 +47,4 @@ module.exports = {
   findForUser,
   listForUser,
   create,
-  findById,
-  findByNotificationId,
-  findByNotificationAndChannel,
 };

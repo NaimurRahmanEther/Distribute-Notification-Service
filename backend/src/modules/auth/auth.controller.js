@@ -6,7 +6,6 @@ const {
   successResponse,
 } = require("../../shared/utils/api-response");
 
-
 function refreshCookieOptions() {
   return {
     httpOnly: true,
@@ -18,7 +17,7 @@ function refreshCookieOptions() {
 
 // POST /api/v1/auth/register
 const register = asyncHandler(async (req, res) => {
-  const user = await authService.register(req.body);
+  const user = await authService.register(req.validated.body);
 
   return successResponse(res, {
     statusCode: 201,
@@ -29,7 +28,7 @@ const register = asyncHandler(async (req, res) => {
 
 // POST /api/v1/auth/login
 const login = asyncHandler(async (req, res) => {
-  const result = await authService.login(req.body);
+  const result = await authService.login(req.validated.body);
 
   const maxAge = Math.max(
     0,
@@ -46,7 +45,6 @@ const login = asyncHandler(async (req, res) => {
     }
   );
 
-  
   return successResponse(res, {
     statusCode: 200,
     message: "Login successful",

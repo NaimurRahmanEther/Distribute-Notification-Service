@@ -9,12 +9,12 @@ const preferenceRoutes = require("./modules/notification/preferences/notificatio
 const notFound = require("./middleware/not-found");
 const errorHandler = require("./middleware/errorHandler");
 const { successResponse } = require("./shared/utils/api-response");
-const morgan=require('morgan')
+const morgan = require("morgan");
 
 const app = express();
 
 app.use(helmet());
-app.use(morgan('dev'))
+app.use(morgan("dev"));
 app.use(cors());
 app.use(express.json());
 app.use(cookieParser());

@@ -6,6 +6,8 @@
   "scripts": {
     "dev": "nodemon src/server.js",
     "start": "node src/server.js",
+    "worker": "node src/workers/notification-worker.js",
+    "outbox": "node src/workers/outbox.js",
     "migrate:up": "node src/database/migrate.js",
     "migrate:down": "node src/database/migrate.js down",
     "test": "echo \"Error: no test specified\" && exit 1"

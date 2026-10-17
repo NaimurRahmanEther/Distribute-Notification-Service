@@ -22,7 +22,7 @@ Choose delivery channels based on user activity, preferences, notification impor
 
 - Authentication and Redis-backed rate limiting are implemented.
 - Docker Compose contains backend, PostgreSQL, and Redis services.
-- BullMQ is installed; delivery queues and workers are not implemented yet. Phase 2 transaction orchestration and unpublished outbox event creation are implemented.
+- Phase 2 transaction orchestration is implemented. Phase 3 queue producer, outbox dispatcher, and separate worker are implemented; successful live Redis/BullMQ integration verification remains pending. See `docs/phase-3.md`.
 - The user reports completing the notification migration.
 - Notification, delivery, and preference files are organized under `backend/src/modules/notification/notifications/`, `backend/src/modules/notification/deliveries/`, and `backend/src/modules/notification/preferences/`. Each module contains its repository, service, controller, routes, and validation.
 - Notification routes are registered at `/api/v1/notifications`.
@@ -123,6 +123,8 @@ Deliverables:
 Completion: a committed notification cannot lose its delivery intent if Redis is unavailable; rolled-back creation leaves no partial records.
 
 ## Phase 3 — BullMQ, outbox dispatcher, and separate worker
+
+Status: implemented, awaiting live Redis acceptance checks. Seventeen PostgreSQL-backed checks with simulated queue/provider behavior passed, and actual publication against unavailable Redis failed within the configured deadline. The Phase 3 IN_APP provider confirms inbox persistence only; Socket.IO, email, and push sending remain later-phase work.
 
 Deliverables:
 

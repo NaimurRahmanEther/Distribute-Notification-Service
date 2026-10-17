@@ -21,7 +21,7 @@ function hashRefreshToken(token) {
   return crypto.createHash("sha256").update(token).digest("hex");
 }
 
-function   createAccessToken(user, sessionId) {
+function createAccessToken(user, sessionId) {
   return jwt.sign(
     {
       sub: String(user.id),
@@ -97,7 +97,6 @@ async function login({ email, password }) {
     throw new AppError("Invalid email or password", 401);
   }
 
-  
   const sessionId = crypto.randomUUID();
 
   const accessToken = createAccessToken(user, sessionId);
@@ -105,21 +104,15 @@ async function login({ email, password }) {
 
   const decodedRefreshToken = jwt.decode(refreshToken);
 
-  if (!decodedRefreshToken?.exp) {
-    throw new Error("Refresh token expiration is missing");
-  }
-
   const refreshExpiresAt = new Date(decodedRefreshToken.exp * 1000);
   const refreshTokenHash = hashRefreshToken(refreshToken);
 
-  
   await authRepository.replaceActiveSession({
     sessionId,
     userId: user.id,
     refreshTokenHash,
     expiresAt: refreshExpiresAt,
   });
-
 
   const safeUser = {
     id: user.id,
@@ -172,7 +165,7 @@ async function refresh(refreshToken) {
 }
 
 async function logout(refreshToken) {
-  
+
   if (!refreshToken) {
     return;
   }
@@ -186,7 +179,7 @@ async function logout(refreshToken) {
       { algorithms: ["HS256"] }
     );
   } catch {
-     
+
     return;
   }
 

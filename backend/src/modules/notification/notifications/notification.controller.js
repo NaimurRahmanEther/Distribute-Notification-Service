@@ -3,14 +3,13 @@ const asyncHandler = require("../../../shared/utils/async-handler");
 const { successResponse } = require("../../../shared/utils/api-response");
 
 const create = asyncHandler(async (req, res) => {
-  
   const notification = await service.createForSelf(
     req.user.userId, req.validated.body
   );
   return successResponse(res, {
     statusCode: 201,
     message: "Notification created",
-    data: { notification, },
+    data: { notification },
   });
 });
 
