@@ -15,6 +15,15 @@ services:
       ACCESS_TOKEN_SECRET: ${ACCESS_TOKEN_SECRET}
       REFRESH_TOKEN_SECRET: ${REFRESH_TOKEN_SECRET}
       REFRESH_COOKIE_SECURE: ${REFRESH_COOKIE_SECURE}
+      SOCKET_ORIGINS: ${SOCKET_ORIGINS:-http://localhost:3000,http://localhost:5173}
+      SOCKET_CHECK_MS: ${SOCKET_CHECK_MS:-15000}
+      PRESENCE_TTL_MS: ${PRESENCE_TTL_MS:-60000}
+      REALTIME_PREFIX: ${REALTIME_PREFIX:-notification-service:realtime}
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      EMAIL_FROM: ${EMAIL_FROM:-}
+      VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:-}
+      VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-}
+      VAPID_SUBJECT: ${VAPID_SUBJECT:-}
     command: ["sh", "-c", "npm run migrate:up && exec node src/server.js"]
     depends_on:
       postgres:

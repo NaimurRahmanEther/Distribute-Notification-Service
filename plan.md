@@ -1,6 +1,6 @@
 # Notification Service Plan
 
-Updated: October 15, 2026
+Updated: October 19, 2026
 
 ## Goal
 
@@ -22,13 +22,13 @@ Choose delivery channels based on user activity, preferences, notification impor
 
 - Authentication and Redis-backed rate limiting are implemented.
 - Docker Compose contains backend, PostgreSQL, and Redis services.
-- Phase 2 transaction orchestration is implemented. Phase 3 queue producer, outbox dispatcher, and separate worker are implemented; successful live Redis/BullMQ integration verification remains pending. See `docs/phase-3.md`.
+- Phases 1-6 backend implementation is complete. Phase 6 adds Browser Web Push subscriptions, encrypted delivery, per-device outcomes and email fallback. Local integration checks passed; real email/push delivery and frontend integration still require configuration and real-device verification. See `docs/phase-5.md` and `docs/phase-6.md`.
 - The user reports completing the notification migration.
 - Notification, delivery, and preference files are organized under `backend/src/modules/notification/notifications/`, `backend/src/modules/notification/deliveries/`, and `backend/src/modules/notification/preferences/`. Each module contains its repository, service, controller, routes, and validation.
 - Notification routes are registered at `/api/v1/notifications`.
 - Listing uses a simple row query and a separate count query, without JSON aggregation. Concurrent writes can cause a small difference between the count and page results.
 - Notification creation is currently a self-only demonstration endpoint. The recipient comes from the authenticated session.
-- Latest verification: 35 mocked API/repository checks passed, plus JavaScript syntax checks. Tests were aligned with the current optional, unrestricted JSON metadata schema. Test files were removed afterward at the user's request. Docker was unavailable, so live PostgreSQL integration remains unverified.
+- Latest verification: 27 Phase 6 checks passed with PostgreSQL, Redis/BullMQ, authenticated routes, encrypted push payloads and simulated browser examples. Earlier Phase 3-5 checks are documented in their phase docs. Temporary test artifacts are removed after testing.
 - Phase 2 verification: 16 mocked transaction/API checks and 9 real PostgreSQL integration checks passed. Migration up/down/up was verified in an isolated schema, then migrations 004–006 were applied to the local development database. The temporary schema was removed and no test files were retained. Full authentication/rate-limit regression coverage remains unverified; the package's `npm test` script is still a placeholder.
 
 ## Delivery policy
@@ -108,7 +108,7 @@ Completion checks:
 
 ## Phase 2 — Delivery tracking, preferences, and transactional outbox
 
-Status: complete for Phase 2 scope. See `docs/phase-2.md` for behavior, internal authorization, verification, and limits. Initial intent uses the first enabled channel in IN_APP → PUSH → EMAIL order; activity-aware selection and provider execution belong to later phases.
+Status: complete for Phase 2 scope. See `docs/phase-2.md` for behavior, internal authorization, verification, and limits. Phase 2 originally selected IN_APP first. Phase 4 now prefers IN_APP for active users and PUSH/EMAIL for inactive users, respecting enabled channels.
 
 Deliverables:
 
@@ -124,7 +124,7 @@ Completion: a committed notification cannot lose its delivery intent if Redis is
 
 ## Phase 3 — BullMQ, outbox dispatcher, and separate worker
 
-Status: implemented, awaiting live Redis acceptance checks. Seventeen PostgreSQL-backed checks with simulated queue/provider behavior passed, and actual publication against unavailable Redis failed within the configured deadline. The Phase 3 IN_APP provider confirms inbox persistence only; Socket.IO, email, and push sending remain later-phase work.
+Status: implemented and live Redis acceptance tested on October 19, 2026. Actual queue publication, worker processing, retry, timeout, duplicate suppression and failure recovery were checked in isolated test infrastructure. Phase 4 now publishes IN_APP events to Socket.IO; email and push sending remain later-phase work.
 
 Deliverables:
 
@@ -140,6 +140,8 @@ Completion: API requests do not wait for delivery; Redis outage/recovery and dup
 
 ## Phase 4 — In-app delivery and activity tracking
 
+Status: implemented and live-tested. See `docs/phase-4.md` for the reading order, client event contract, presence semantics and limitations. Initial selection uses client-reported recent activity; provider fallback and unread reminders remain later phases.
+
 Deliverables:
 
 - Socket.IO integration with existing HTTP server and access-token/session validation.
@@ -154,6 +156,8 @@ Completion: intended users receive events; offline users retain their inbox; emi
 
 ## Phase 5 — Email delivery
 
+Status: implemented and locally verified; real-provider delivery has not been tested. Setup and code reading order: `docs/phase-5.md`.
+
 Deliverables:
 
 - Select an email provider and add a small provider interface.
@@ -165,6 +169,8 @@ Deliverables:
 Completion: email is sent only when policy permits it, outcomes are tracked, and failures do not erase notifications.
 
 ## Phase 6 — Push delivery
+
+Status: Browser Web Push implemented with frontend integration examples. Subscriptions and push targets use separate migrations 007 and 008; `push_initialized` is defined in migration 004. Both push migrations are applied locally; 27 phase checks passed. Real-browser delivery is not yet verified. Setup and reading order: `docs/phase-6.md`.
 
 Deliverables:
 

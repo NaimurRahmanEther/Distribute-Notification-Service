@@ -5,9 +5,21 @@ const { jobSchema } = require("../queue/notification-job");
 const repository = require("./delivery.repository");
 const preferences = require("../modules/notification/preferences/notification-preference.service");
 const provider = require("../providers/notification-provider");
+const routing = require("./delivery-routing.service");
+const pushTargets = require("../providers/push/push-target.repository");
 
-async function sendWithTimeout(send, record) {
+async function sendWithTimeout(send, record, client) {
   const controller = new AbortController();
+  // Push records device outcomes using this client. Wait for abort cleanup before
+  // releasing the delivery lock or allowing another attempt to use its targets.
+  if (record.channel === "PUSH") {
+    const deadline = setTimeout(() => controller.abort(), config.providerTimeoutMs);
+    try {
+      return await send(record, record, { signal: controller.signal, idempotencyKey: record.id, client });
+    } finally {
+      clearTimeout(deadline);
+    }
+  }
   let timer;
   const timeout = new Promise((resolve, reject) => {
     timer = setTimeout(() => {
@@ -39,6 +51,19 @@ async function releaseDelivery(client, deliveryId, locked) {
   }
 }
 
+async function finishPushTargets(record, client) {
+  if (record.channel !== "PUSH") {
+    return false;
+  }
+  await pushTargets.failPending(record.id, client);
+  const outcomes = await pushTargets.summary(record.id, client);
+  if (!outcomes.sent) {
+    return false;
+  }
+  await repository.finish(record.id, "SENT", "SOME_PUSH_TARGETS_FAILED", 0, null, client);
+  return true;
+}
+
 async function sendDelivery(job, record, maxAttempts, send, client) {
   const attempt = await repository.start(record.id, client);
   if (!attempt) {
@@ -47,14 +72,22 @@ async function sendDelivery(job, record, maxAttempts, send, client) {
 
   let result;
   try {
-    result = await sendWithTimeout(send, record);
+    result = await sendWithTimeout(send, record, client);
   } catch (error) {
+    if (error.pushUnavailable && await routing.fallbackFromPush(record, client)) {
+      return { status: "SKIPPED" };
+    }
     const permanent = error instanceof UnrecoverableError;
     const exhausted = attempt.attempt_count >= maxAttempts || job.attemptsMade + 1 >= maxAttempts;
     const failed = permanent || exhausted;
     const status = failed ? "FAILED" : "RETRYING";
     const reason = permanent ? "PERMANENT_PROVIDER_FAILURE" : "TRANSIENT_PROVIDER_FAILURE";
-    const delay = config.backoffMs * 2 ** (attempt.attempt_count - 1);
+    const backoff = config.backoffMs * 2 ** (attempt.attempt_count - 1);
+    const delay = Math.max(backoff, error.retryAfterMs || 0);
+
+    if (failed && await finishPushTargets(record, client)) {
+      return { status: "SENT" };
+    }
 
     await repository.finish(record.id, status, reason, delay, null, client);
     if (failed) {
@@ -94,11 +127,17 @@ function createProcessor(send = provider.send) {
 
       const settings = await preferences.getMine(record.user_id, client);
       if (!settings[record.channel] || (record.stage !== "INITIAL" && record.read_at)) {
+        if (record.channel === "PUSH") {
+          await pushTargets.cancelPending(record.id, client);
+        }
         await repository.finish(record.id, "SKIPPED", null, 0, null, client);
         return { status: "SKIPPED" };
       }
       const maxAttempts = Math.min(job.opts.attempts || config.attempts, config.attempts);
       if (record.attempt_count >= maxAttempts) {
+        if (await finishPushTargets(record, client)) {
+          return { status: "SENT" };
+        }
         await repository.finish(record.id, "FAILED", "ATTEMPTS_EXHAUSTED", 0, null, client);
         throw new UnrecoverableError("ATTEMPTS_EXHAUSTED");
       }
@@ -107,6 +146,9 @@ function createProcessor(send = provider.send) {
         throw new DelayedError();
       }
 
+      if (await routing.redirectIfNeeded(record, settings, client)) {
+        return { status: "SKIPPED" };
+      }
       return await sendDelivery(job, record, maxAttempts, send, client);
     } finally {
       await releaseDelivery(client, data.deliveryId, locked);
@@ -130,6 +172,9 @@ async function reconcileFailures(queue, afterId = null) {
       }
       const record = await repository.load(id, client);
       if (record && ["PENDING", "RETRYING", "PROCESSING"].includes(record.status)) {
+        if (await finishPushTargets(record, client)) {
+          continue;
+        }
         await repository.finish(id, "FAILED", "QUEUE_JOB_FAILED", 0, null, client);
       }
     } finally {

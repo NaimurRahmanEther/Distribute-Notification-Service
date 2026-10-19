@@ -7,6 +7,7 @@ CREATE TABLE notification_deliveries (
     status VARCHAR(20) NOT NULL DEFAULT 'PENDING'
         CHECK (status IN ('PENDING', 'PROCESSING', 'RETRYING', 'SENT', 'FAILED', 'SKIPPED', 'CANCELLED')),
     attempt_count INTEGER NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
+    push_initialized BOOLEAN NOT NULL DEFAULT FALSE,
     provider_message_id TEXT,
     last_error TEXT,
     next_attempt_at TIMESTAMPTZ,

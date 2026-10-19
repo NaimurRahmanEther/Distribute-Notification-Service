@@ -385,3 +385,15 @@ Notification folders live under `src/modules/notification/`: `notifications`, `d
 ### Cleanup verification - October 17, 2026
 
 39 integration checks passed with real PostgreSQL in a temporary schema, Express, JWT and bcrypt. These covered migration up/down/up, authentication, request validation, ownership, unread filters, delivery defaults, atomic outbox creation and rollback, simulated publication, in-app processing, duplicate suppression, disabled channels and deletion. Rate limiting used an in-memory store and BullMQ publication was simulated; live Redis behavior was not verified in this run. The temporary schema was removed and no test files were retained. All 48 JavaScript source files passed syntax and local import checks.
+
+## Phase 4: real-time notifications
+
+The API now starts an HTTP server with authenticated Socket.IO over WebSocket transport. The notification worker publishes live in-app events through Redis; API instances emit to authenticated user rooms. Presence tracks separate online and active states with expiry, and initial channel selection uses recent activity. Existing REST routes recover notifications missed while disconnected. See [Phase 4 setup, client example and code reading order](../docs/phase-4.md).
+
+## Phase 5: email notifications
+
+The worker sends eligible email deliveries through Resend using `RESEND_API_KEY` and `EMAIL_FROM`. It loads the recipient email from PostgreSQL, escapes HTML, stores the provider message ID and retries temporary failures with a stable idempotency key. Initial deliveries recheck activity before sending and can fall back from unavailable push to enabled email. See [Phase 5 setup, verification and code reading order](../docs/phase-5.md). Real Resend delivery has not been tested; 14 checks passed against a local simulated provider with PostgreSQL and Redis/BullMQ.
+
+## Phase 6: browser push notifications
+
+Authenticated `/api/v1/push-subscriptions` routes manage browser subscriptions. The worker encrypts Web Push messages, records per-device outcomes, retries unfinished targets and removes expired subscriptions. Configure `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` and `VAPID_SUBJECT`, and integrate the frontend examples. See [Phase 6 setup, Postman inputs, verification and reading order](../docs/phase-6.md). Real browser delivery remains unverified; 27 local integration/example checks passed.

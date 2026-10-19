@@ -14,8 +14,10 @@ async function unlock(id, client) {
 
 async function load(id, client) {
   const { rows } = await client.query(
-    `SELECT d.*, n.user_id, n.type, n.title, n.message, n.data, n.read_at
+    `SELECT d.*, n.user_id, n.type, n.title, n.message, n.data, n.read_at,
+            u.email AS recipient_email
      FROM notification_deliveries d JOIN notifications n ON n.id = d.notification_id
+     JOIN users u ON u.id = n.user_id
      WHERE d.id = $1`, [id]
   );
   return rows[0] || null;
@@ -55,4 +57,15 @@ async function pendingPublished(afterId = null) {
   return rows;
 }
 
-module.exports = { lock, unlock, load, start, finish, pendingPublished };
+async function createAlternative(id, record, channel, client) {
+  const { rows } = await client.query(
+    `INSERT INTO notification_deliveries (id, notification_id, channel, stage)
+     VALUES ($1, $2, $3, $4)
+     ON CONFLICT (notification_id, channel, stage) DO NOTHING
+     RETURNING *`,
+    [id, record.notification_id, channel, record.stage]
+  );
+  return rows[0];
+}
+
+module.exports = { lock, unlock, load, start, finish, pendingPublished, createAlternative };

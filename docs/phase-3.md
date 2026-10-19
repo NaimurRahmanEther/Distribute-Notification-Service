@@ -10,7 +10,7 @@ Notification API → PostgreSQL notification + delivery + outbox transaction
     → provider → delivery outcome in PostgreSQL
 ```
 
-The API does not enqueue directly or wait for Redis. Existing authentication and rate-limit connections are unchanged. No new dependencies or schema migrations were required.
+The API does not enqueue directly or wait for delivery. Phase 4 now adds a bounded Redis presence lookup and best-effort read/delete event publication. Queue and rate-limit connections remain separate. Phase 3 required no new schema migration.
 
 ## Run locally
 
@@ -36,11 +36,11 @@ New optional settings (defaults shown):
 
 ## Current provider behavior
 
-- `IN_APP`: confirms that the notification is available in the persisted inbox and records `SENT`. It does not emit Socket.IO events or imply the user received/read a live event. Socket.IO integration is Phase 4.
+- `IN_APP`: originally confirmed persisted inbox availability. Phase 4 now also publishes a live Redis event consumed by Socket.IO API instances. `SENT` still does not mean a client received or read it. See `phase-4.md`.
 - `EMAIL` and `PUSH`: not implemented yet; the worker records a permanent provider failure rather than claiming delivery. Keep these preferences disabled for the Phase 3 inbox demonstration. These providers arrive in Phases 5 and 6.
 - Failed delivery rows are terminal until a controlled replay is implemented. Turning on a provider later does not automatically resend those old rows.
 - A disabled channel or an already-read reminder is `SKIPPED` without incrementing delivery attempts. Initial inbox delivery is not skipped just because it is already read.
-- Activity-aware fallback and unread-reminder creation are not implemented in this phase.
+- Phase 4 adds activity-aware initial channel selection. Provider failure fallback and unread-reminder creation remain later work.
 
 ## Outbox dispatcher
 
@@ -73,9 +73,15 @@ Both entry points handle SIGINT/SIGTERM, stop their loop, and close their queue/
 - 17 checks passed using real PostgreSQL in an isolated schema and simulated queue/provider behavior: publication retry, stable IDs, concurrent dispatcher locking, invalid events, in-app completion, worker duplication, preference/read checks, transient/permanent failures, exhaustion, timeout, lock recovery, failed-job reconciliation, and deletion.
 - The first run found a PostgreSQL parameter-type inference issue in delivery status updates; an explicit cast fixed it and the full suite passed afterward.
 - An actual BullMQ producer against unavailable Redis rejected publication within approximately five seconds and closed its connection successfully.
-- Redis and Docker were not running, so successful enqueue, real Worker consumption, BullMQ's delayed scheduling, and Redis recovery have not been verified end to end yet. Phase 3 live acceptance remains pending.
+- The original run could not access Redis. Live Redis verification was subsequently performed on October 19, 2026; see below.
 - The temporary PostgreSQL schema and test file were removed after verification. No permanent test files are retained per the user's instruction.
 
 ## Source references
 
 Connection settings follow [BullMQ connections](https://docs.bullmq.io/guide/connections). Retry behavior follows [retrying failing jobs](https://docs.bullmq.io/guide/retrying-failing-jobs); duplicate handling follows [job IDs](https://docs.bullmq.io/guide/jobs/job-ids). The provider deadline uses the approach described in [timeout jobs](https://docs.bullmq.io/patterns/timeout-jobs).
+
+## Live verification on October 19, 2026
+
+14 checks passed with real PostgreSQL and an isolated Redis 7 container: enqueue-to-worker completion, duplicate publication, terminal-state protection after queue-job removal, delayed retry, attempt exhaustion, permanent failure, provider timeout, advisory-lock contention and recovery, worker stop/start, unavailable publication endpoint and recovery, actual worker-process crash, and BullMQ stalled-job recovery. Test provider failures were injected deliberately; the actual IN_APP provider was also exercised. A normal stalled-check lease can delay crash recovery, so the crash test allows up to 60 seconds.
+
+The isolated schemas/queues, temporary test scripts and Redis container were removed. These tests supersede the earlier live-Redis verification limitation. Email, push and DLQ remain later phases.

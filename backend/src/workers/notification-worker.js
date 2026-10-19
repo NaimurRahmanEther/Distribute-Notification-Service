@@ -4,6 +4,7 @@ const { pool } = require("../config/db");
 const config = require("../config/queue");
 const { createNotificationQueue } = require("../queue/notification.queue");
 const { createProcessor, reconcileFailures } = require("./delivery.processor");
+const { closeRealtimeConnection } = require("../config/realtime");
 
 async function main() {
   const queue = createNotificationQueue();
@@ -42,6 +43,7 @@ async function main() {
   } finally {
     await worker.close();
     await queue.close();
+    closeRealtimeConnection();
     await pool.end();
   }
 }

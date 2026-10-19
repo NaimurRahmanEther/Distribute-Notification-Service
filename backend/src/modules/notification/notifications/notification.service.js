@@ -7,6 +7,8 @@ const preferences = require("../preferences/notification-preference.service");
 const deliveries = require("../deliveries/notification-delivery.service");
 const outbox = require("../outbox/notification-outbox.service");
 const { selectInitialChannel } = require("./notification.policy");
+const presence = require("../presence/notification-presence.service");
+const events = require("../../../realtime/notification-events");
 
 function requireNotification(notification) {
   if (!notification) {
@@ -16,6 +18,7 @@ function requireNotification(notification) {
 }
 
 async function persistNotification(userId, input, missingStatus) {
+  const activity = await presence.getForUser(userId);
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
@@ -29,7 +32,7 @@ async function persistNotification(userId, input, missingStatus) {
       data: input.data,
     }, client);
 
-    const channel = selectInitialChannel(settings);
+    const channel = selectInitialChannel(settings, activity.active);
     if (channel) {
       const delivery = await deliveries.create({ notificationId: notification.id, channel }, client);
       await outbox.requestDelivery(delivery, client);
@@ -94,15 +97,21 @@ async function getMine(userId, id) {
 }
 
 async function markMineRead(userId, id) {
-  return requireNotification(await repository.markReadForUser(userId, id));
+  const notification = requireNotification(await repository.markReadForUser(userId, id));
+  await events.publishUpdate(userId, "notification:read", id);
+  return notification;
 }
 
 async function markAllMineRead(userId) {
-  return { updatedCount: await repository.markAllReadForUser(userId) };
+  const updatedCount = await repository.markAllReadForUser(userId);
+  await events.publishUpdate(userId, "notifications:read-all");
+  return { updatedCount };
 }
 
 async function deleteMine(userId, id) {
-  return requireNotification(await repository.deleteForUser(userId, id));
+  const notification = requireNotification(await repository.deleteForUser(userId, id));
+  await events.publishUpdate(userId, "notification:deleted", id);
+  return notification;
 }
 
 module.exports = {

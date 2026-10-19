@@ -14,7 +14,7 @@ No Redis connection or external provider is needed for this operation. The respo
 
 ## Current channel policy
 
-Missing preferences default to `IN_APP: true`, `EMAIL: false`, `PUSH: false`. Phase 2 selects the first enabled channel in `IN_APP`, `PUSH`, `EMAIL` order. It does not fan out to all enabled channels. If all channels are disabled, the inbox notification is still saved without a delivery or outbox record.
+Missing preferences default to `IN_APP: true`, `EMAIL: false`, `PUSH: false`. Phase 2 originally selected the first enabled channel in `IN_APP`, `PUSH`, `EMAIL` order. Phase 4 now uses this order for active users and `PUSH`, `EMAIL`, `IN_APP` for inactive users; see `phase-4.md`. It does not fan out to all enabled channels. If all channels are disabled, the inbox notification is still saved without a delivery or outbox record.
 
 This is initial intent selection only. Presence, provider availability, receipt acknowledgements, delivery failures, and unread duration do not influence selection yet. The later worker must recheck current preferences before sending. Phase 4 adds activity-aware selection; Phases 5 and 6 add email and push delivery; Phase 8 adds unread reminders. `SECURITY` currently obeys ordinary preferences, with no mandatory email override.
 
