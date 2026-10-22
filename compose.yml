@@ -1,58 +1,238 @@
-# Local settings are loaded from the root .env file.
+x-runtime: &runtime
+  init: true
+  restart: unless-stopped
+  stop_grace_period: 90s
+  logging:
+    driver: json-file
+    options: {max-size: "10m", max-file: "3"}
+
+x-auth: &auth
+  <<: *runtime
+  image: notification-auth:local
+  build: {context: ./services/auth-service, dockerfile: dockerfile}
+  networks: [services, auth-data]
+  environment:
+    NODE_ENV: ${NODE_ENV:-production}
+    PORT: 3001
+    CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000,http://localhost:5173}
+    DATABASE_URL: postgresql://${AUTH_DB_USER}:${AUTH_DB_PASSWORD}@auth-db:5432/${AUTH_DB_NAME}
+    REDIS_HOST: auth-redis
+    REDIS_PORT: 6379
+    INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:?Set INTERNAL_SERVICE_TOKEN}
+    ACCESS_TOKEN_SECRET: ${ACCESS_TOKEN_SECRET:?Set ACCESS_TOKEN_SECRET}
+    REFRESH_TOKEN_SECRET: ${REFRESH_TOKEN_SECRET:?Set REFRESH_TOKEN_SECRET}
+    ACCESS_TOKEN_EXPIRES_IN: ${ACCESS_TOKEN_EXPIRES_IN:-1d}
+    REFRESH_TOKEN_EXPIRES_IN: ${REFRESH_TOKEN_EXPIRES_IN:-7d}
+    REFRESH_COOKIE_NAME: ${REFRESH_COOKIE_NAME:-refreshToken}
+    GATEWAY_SOCKET_COOKIE_NAME: ${GATEWAY_SOCKET_COOKIE_NAME:-notificationSocketAccess}
+    REFRESH_COOKIE_SECURE: ${REFRESH_COOKIE_SECURE:-true}
+    REFRESH_COOKIE_SAME_SITE: ${REFRESH_COOKIE_SAME_SITE:-strict}
+    REFRESH_COOKIE_PATH: ${REFRESH_COOKIE_PATH:-/api/v1/auth}
+    SHUTDOWN_TIMEOUT_MS: ${SHUTDOWN_TIMEOUT_MS:-75000}
+
+x-notification: &notification
+  <<: *runtime
+  image: notification-domain:local
+  build: {context: ./services/notification-service, dockerfile: dockerfile}
+  networks: [services, notification-data, egress]
+  environment:
+    NODE_ENV: ${NODE_ENV:-production}
+    PORT: 3002
+    CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000,http://localhost:5173}
+    DATABASE_URL: postgresql://${NOTIFICATION_DB_USER}:${NOTIFICATION_DB_PASSWORD}@notification-db:5432/${NOTIFICATION_DB_NAME}
+    REDIS_HOST: notification-redis
+    REDIS_PORT: 6379
+    AUTH_SERVICE_URL: http://auth-service:3001
+    GATEWAY_IDENTITY_SECRET: ${GATEWAY_IDENTITY_SECRET:?Set GATEWAY_IDENTITY_SECRET}
+    REQUIRE_GATEWAY_IDENTITY: "true"
+    AUTH_SERVICE_TIMEOUT_MS: ${AUTH_SERVICE_TIMEOUT_MS:-3000}
+    INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:?Set INTERNAL_SERVICE_TOKEN}
+    DELIVERY_MAX_ATTEMPTS: ${DELIVERY_MAX_ATTEMPTS:-5}
+    DELIVERY_BACKOFF_MS: ${DELIVERY_BACKOFF_MS:-1000}
+    WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-3}
+    DELIVERY_TIMEOUT_MS: ${DELIVERY_TIMEOUT_MS:-10000}
+    OUTBOX_POLL_MS: ${OUTBOX_POLL_MS:-1000}
+    SOCKET_ORIGINS: ${SOCKET_ORIGINS:-http://localhost:3000,http://localhost:5173}
+    SOCKET_CHECK_MS: ${SOCKET_CHECK_MS:-15000}
+    PRESENCE_TTL_MS: ${PRESENCE_TTL_MS:-60000}
+    REALTIME_PREFIX: ${REALTIME_PREFIX:-notification-service:realtime}
+    RESEND_API_KEY: ${RESEND_API_KEY:-}
+    EMAIL_FROM: ${EMAIL_FROM:-}
+    VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:-}
+    VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-}
+    VAPID_SUBJECT: ${VAPID_SUBJECT:-}
+    REMINDERS_ENABLED: ${REMINDERS_ENABLED:-true}
+    REMINDER_FIRST_MS: ${REMINDER_FIRST_MS:-1800000}
+    REMINDER_SECOND_MS: ${REMINDER_SECOND_MS:-86400000}
+    REMINDER_MAX_COUNT: ${REMINDER_MAX_COUNT:-2}
+    REMINDER_TYPES: ${REMINDER_TYPES:-SYSTEM,SECURITY}
+    SCHEDULE_RECHECK_MS: ${SCHEDULE_RECHECK_MS:-60000}
+    SHUTDOWN_TIMEOUT_MS: ${SHUTDOWN_TIMEOUT_MS:-75000}
+
 services:
-  backend:
-    build:
-      context: ./backend
-      dockerfile: dockerfile
-    ports:
-      - "${PORT}:${PORT}"
-    environment:
-      NODE_ENV: ${NODE_ENV}
-      PORT: ${PORT}
-      DATABASE_URL: ${DATABASE_URL}
-      REDIS_HOST: ${REDIS_HOST}
-      REDIS_PORT: ${REDIS_PORT}
-      ACCESS_TOKEN_SECRET: ${ACCESS_TOKEN_SECRET}
-      REFRESH_TOKEN_SECRET: ${REFRESH_TOKEN_SECRET}
-      REFRESH_COOKIE_SECURE: ${REFRESH_COOKIE_SECURE}
-      SOCKET_ORIGINS: ${SOCKET_ORIGINS:-http://localhost:3000,http://localhost:5173}
-      SOCKET_CHECK_MS: ${SOCKET_CHECK_MS:-15000}
-      PRESENCE_TTL_MS: ${PRESENCE_TTL_MS:-60000}
-      REALTIME_PREFIX: ${REALTIME_PREFIX:-notification-service:realtime}
-      RESEND_API_KEY: ${RESEND_API_KEY:-}
-      EMAIL_FROM: ${EMAIL_FROM:-}
-      VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:-}
-      VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-}
-      VAPID_SUBJECT: ${VAPID_SUBJECT:-}
-    command: ["sh", "-c", "npm run migrate:up && exec node src/server.js"]
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-
-  postgres:
-    image: postgres:16-alpine
-    environment:
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_DB: ${POSTGRES_DB}
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
+  load-balancer:
+    <<: *runtime
+    build: ./infra/nginx
+    ports: ["${PORT:-8000}:8080"]
+    networks: [edge]
+    depends_on: [api-gateway]
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
-      interval: 5s
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/health/live"]
+      interval: 15s
       timeout: 5s
+      retries: 3
+  api-gateway:
+    <<: *runtime
+    build: ./gateway/api-gateway
+    networks: [edge, services, gateway-control]
+    deploy: {replicas: 2}
+    depends_on:
+      gateway-access: {condition: service_healthy}
+      auth-service: {condition: service_healthy}
+      notification-service: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/health/ready"]
+      interval: 15s
+      timeout: 10s
+      retries: 3
+  gateway-access:
+    <<: *runtime
+    build: ./gateway/api-gateway/access
+    networks: [gateway-control, gateway-data, services]
+    environment:
+      PORT: 3003
+      REDIS_HOST: gateway-redis
+      REDIS_PORT: 6379
+      GATEWAY_RATE_LIMIT_MAX: ${GATEWAY_RATE_LIMIT_MAX:-100}
+      GATEWAY_RATE_LIMIT_WINDOW_MS: ${GATEWAY_RATE_LIMIT_WINDOW_MS:-60000}
+      GATEWAY_ROUTE_RATE_LIMIT_MAX: ${GATEWAY_ROUTE_RATE_LIMIT_MAX:-100}
+      GATEWAY_ROUTE_RATE_LIMIT_WINDOW_MS: ${GATEWAY_ROUTE_RATE_LIMIT_WINDOW_MS:-60000}
+      GATEWAY_LOGIN_RATE_LIMIT_MAX: ${GATEWAY_LOGIN_RATE_LIMIT_MAX:-10}
+      GATEWAY_REGISTER_RATE_LIMIT_MAX: ${GATEWAY_REGISTER_RATE_LIMIT_MAX:-5}
+      GATEWAY_AUTH_RATE_LIMIT_WINDOW_MS: ${GATEWAY_AUTH_RATE_LIMIT_WINDOW_MS:-900000}
+      GATEWAY_SESSION_RATE_LIMIT_MAX: ${GATEWAY_SESSION_RATE_LIMIT_MAX:-30}
+      GATEWAY_SOCKET_COOKIE_NAME: ${GATEWAY_SOCKET_COOKIE_NAME:-notificationSocketAccess}
+      AUTH_SERVICE_URL: http://auth-service:3001
+      AUTH_SERVICE_TIMEOUT_MS: ${AUTH_SERVICE_TIMEOUT_MS:-3000}
+      INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:?Set INTERNAL_SERVICE_TOKEN}
+      GATEWAY_IDENTITY_SECRET: ${GATEWAY_IDENTITY_SECRET:?Set GATEWAY_IDENTITY_SECRET}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000,http://localhost:5173}
+    depends_on:
+      gateway-redis: {condition: service_healthy}
+      auth-service: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3003/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 12s
       retries: 10
-      start_period: 10s
-
-  redis:
+  gateway-redis:
     image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "${REDIS_MAXMEMORY:-256mb}", "--maxmemory-policy", "noeviction"]
+    networks: [gateway-data]
+    volumes: ["gateway_redis_data:/data"]
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
       timeout: 3s
       retries: 10
+  auth-migrate:
+    <<: *auth
+    restart: "no"
+    command: ["node", "src/database/migrate.js"]
+    depends_on:
+      auth-db: {condition: service_healthy}
+  auth-service:
+    <<: *auth
+    command: ["node", "src/server.js"]
+    depends_on:
+      auth-migrate: {condition: service_completed_successfully}
+      auth-redis: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3001/health/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 10s
+      retries: 10
+  notification-migrate:
+    <<: *notification
+    restart: "no"
+    command: ["node", "src/database/migrate.js"]
+    depends_on:
+      notification-db: {condition: service_healthy}
+  notification-service:
+    <<: *notification
+    command: ["node", "src/server.js"]
+    depends_on: &notification-dependencies
+      notification-migrate: {condition: service_completed_successfully}
+      auth-service: {condition: service_healthy}
+      notification-redis: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3002/health/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 10s
+      retries: 10
+  notification-worker:
+    <<: *notification
+    command: ["node", "src/workers/notification-worker.js"]
+    depends_on: *notification-dependencies
+  outbox-dispatcher:
+    <<: *notification
+    command: ["node", "src/workers/outbox.js"]
+    depends_on: *notification-dependencies
+  auth-db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    networks: [auth-data]
+    environment:
+      POSTGRES_USER: ${AUTH_DB_USER}
+      POSTGRES_PASSWORD: ${AUTH_DB_PASSWORD}
+      POSTGRES_DB: ${AUTH_DB_NAME}
+    volumes: ["auth_data:/var/lib/postgresql/data"]
+    healthcheck: &postgres-health
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+  notification-db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    networks: [notification-data]
+    environment:
+      POSTGRES_USER: ${NOTIFICATION_DB_USER}
+      POSTGRES_PASSWORD: ${NOTIFICATION_DB_PASSWORD}
+      POSTGRES_DB: ${NOTIFICATION_DB_NAME}
+    volumes: ["notification_data:/var/lib/postgresql/data"]
+    healthcheck: *postgres-health
+  auth-redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "${REDIS_MAXMEMORY:-256mb}", "--maxmemory-policy", "noeviction"]
+    networks: [auth-data]
+    volumes: ["auth_redis_data:/data"]
+    healthcheck: &redis-health
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+  notification-redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "${REDIS_MAXMEMORY:-256mb}", "--maxmemory-policy", "noeviction"]
+    networks: [notification-data]
+    volumes: ["notification_redis_data:/data"]
+    healthcheck: *redis-health
 
+networks:
+  gateway-control: {internal: true}
+  gateway-data: {internal: true}
+  edge:
+  services: {internal: true}
+  auth-data: {internal: true}
+  notification-data: {internal: true}
+  egress:
 volumes:
-  postgres_data:
+  gateway_redis_data:
+  auth_data:
+  notification_data:
+  auth_redis_data:
+  notification_redis_data:

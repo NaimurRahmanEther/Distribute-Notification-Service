@@ -1,3 +1,30 @@
+# Local secrets (keep configuration examples)
 .env
 .env.*
 !.env.example
+
+# Installed dependencies and generated output
+node_modules/
+coverage/
+logs/
+*.log
+dist/
+build/
+*.tsbuildinfo
+
+# Local editor and operating-system files
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Temporary verification artifacts
+.access-check/
+.access-check.env
+*.tmp
+*.temp
+
+# Personal project planning and historical phase notes
+/plan.md
+/docs/phase-*.md
+/docs/legacy-backend.md
