@@ -2,10 +2,11 @@
   "name": "notification-platform",
   "private": true,
   "scripts": {
-    "dev:auth": "npm --prefix services/auth-service run dev",
-    "dev:notifications": "npm --prefix services/notification-service run dev",
-    "worker": "npm --prefix services/notification-service run worker",
-    "outbox": "npm --prefix services/notification-service run outbox",
-    "migrate:legacy": "node tools/migrate-legacy.cjs"
+    "dev": "npm --prefix backend run dev",
+    "start": "npm --prefix backend start",
+    "worker": "npm --prefix backend run worker",
+    "outbox": "npm --prefix backend run outbox",
+    "migrate:up": "npm --prefix backend run migrate:up",
+    "migrate:down": "npm --prefix backend run migrate:down"
   }
 }

@@ -1,53 +1,80 @@
-# Notification platform
+# Notification service
 
-CommonJS microservices for authentication and in-app, email and Web Push notifications. PostgreSQL stores durable notification intent; BullMQ workers process deliveries through provider strategies. Outbox recovery, retries, DLQ replay, scheduling and unread reminders remain in the notification domain.
+A modular monolith built with Express, PostgreSQL, Redis and BullMQ. Auth and notifications share one backend and database. Nginx is a reverse proxy; there is no separate API gateway.
 
 ```text
-services/
-  auth-service/             # Users, JWT sessions, auth rate limits; own PostgreSQL/Redis
-  notification-service/     # Notification API, WebSockets, worker, dispatcher; own PostgreSQL/Redis
-gateway/api-gateway/        # Nginx routing + internal Redis rate limits and token validation
-infra/
-  nginx/                    # Public Nginx load balancer
-  compose.local.yml         # Optional localhost datastore ports
-tools/migrate-legacy.cjs    # Offline copy into empty service databases
-docs/                       # Architecture and phase guides
-compose.yml                 # Local multi-service runtime
-plan.md
+Browser -> Nginx -> Express backend -> PostgreSQL
+                         |                |
+                         |         notification + delivery + outbox
+                         |                |
+                       Redis <- outbox dispatcher
+                         |
+                    BullMQ worker -> in-app / email / Web Push
+```
+
+The API, worker and outbox are three processes from the same backend package. They are not independent microservices.
+
+## Folder structure
+
+```text
+backend/src/
+  modules/
+    auth/              registration, login, sessions
+    notification/      inbox, deliveries, preferences, subscriptions,
+                       presence, outbox, schedules, dead letters
+    operations/        health and admin metrics
+  middleware/          auth, role, validation, rate limits, errors
+  database/            migrations
+  queue/               BullMQ producers and job schemas
+  workers/             delivery, scheduling and outbox processing
+  providers/           in-app, email and push strategies
+  realtime/            Socket.IO events and presence
+  config/              environment, PostgreSQL, Redis, queue settings
+  shared/              small response/error/shutdown helpers
+infra/nginx/            reverse proxy
+compose.yml            local runtime
 ```
 
 ## Run locally
 
-Requires Docker Desktop with Linux containers and Docker Compose v2. From this directory, copy `.env.example` to `.env` **only if `.env` does not already exist**, then set separate database passwords, JWT secrets and an internal service token and a separate GATEWAY_IDENTITY_SECRET of at least 32 characters each. Use URL-safe database passwords because Compose builds PostgreSQL URLs from them. Local HTTP needs `REFRESH_COOKIE_SECURE=false`.
+Use Docker Desktop with Linux containers. Copy root .env.example to .env only if .env does not exist. Set database credentials and separate access/refresh JWT secrets of at least 32 characters. Use URL-safe database passwords. For local HTTP keep REFRESH_COOKIE_SECURE=false.
 
 ```powershell
 docker compose up -d --build
 docker compose ps
-docker compose logs -f auth-service notification-service notification-worker outbox-dispatcher
+docker compose logs -f backend worker outbox
 ```
 
-Public URL: `http://localhost:8000` (root `PORT`). Two API gateway replicas start by default. Migrations run in separate one-shot containers before their APIs start. Only the load balancer publishes a port; service databases, Redis and internal APIs stay inside Docker networks.
+Public URL: http://localhost:8000 (root PORT). Only Nginx publishes a port. Migrations run before the API starts. PostgreSQL and Redis persist in monolith-specific named volumes. docker compose down stops the stack without deleting its data.
+
+Previous microservice/legacy volumes are untouched and are not automatically imported. Do not point the new backend at a notification-only database: it needs the users/session tables and foreign keys defined by the monolith migrations. Existing local environment backups are ignored under infra/legacy/; retired source is ignored under .legacy-code/.
+
+## Direct Node development
 
 ```powershell
-docker compose up -d --scale auth-service=2 --scale notification-service=2 --scale notification-worker=2
-docker compose down
+docker compose -f compose.yml -f infra/compose.local.yml up -d postgres redis
+cd backend
+npm ci
+npm run migrate:up
+npm run dev
+# Separate terminals in backend:
+npm run worker
+npm run outbox
 ```
 
-`down` preserves data. Do not add `--volumes` unless you intend to delete this stack's data. Existing legacy database volumes are not imported or deleted automatically. Read the [migration procedure](docs/microservices.md#existing-data) before switching an existing project.
+Copy backend/.env.example to backend/.env only if absent, then match its DATABASE_URL password to root .env. The optional datastore ports are localhost:5632 and localhost:16382. Direct API port is 3000. Normal Compose reads root .env; direct Node commands read backend/.env. The backend trusts one proxy hop; expose only Nginx for shared access.
 
-## API and configuration
+## Behavior
 
-Existing client paths remain `/api/v1/auth`, `/api/v1/notifications`, `/api/v1/notification-deliveries`, `/api/v1/notification-preferences`, `/api/v1/push-subscriptions`, `/api/v1/admin/dead-letters` and `/api/v1/admin/operations`. Send the access token as `Authorization: Bearer <token>`. `/socket.io/` uses WebSocket transport and `auth: { token }` plus the scoped HttpOnly cookie set by login/refresh (native clients may send a Bearer header).
+Migration layout: each application table has one create migration and its matching rollback file. Columns and constraints live in that table's original CREATE TABLE. These consolidated files initialize a fresh database; editing them does not update an existing database that already recorded the migration. Migration numbers may contain gaps.
 
-- `/health/live`: gateway process liveness; `/health/ready`: notification, Auth and datastore readiness.
-- Email requires `RESEND_API_KEY` and `EMAIL_FROM`; Web Push requires VAPID keys/subject and a browser subscription. Empty provider settings do not send real messages.
-- Active users prefer in-app delivery, then configured fallback policy applies. Default unread reminders are PUSH at 30 minutes and EMAIL at 24 hours, at most two, only SYSTEM/SECURITY. Reading suppresses later eligible reminders.
-- Compose reads root `.env` and explicitly passes each service's settings. Direct Node commands read that service's `.env`. Notification processes do not receive JWT signing secrets or Auth database credentials.
-- Set `CORS_ORIGINS` and `SOCKET_ORIGINS` to your frontend origins. Browser login/refresh/logout use `credentials: "include"` for the HttpOnly refresh cookie.
-- The gateway checks global and route-specific shared Redis IP budgets, then validates protected-route sessions with Auth before forwarding. The global default is: default 100 requests per 60 seconds, controlled by `GATEWAY_RATE_LIMIT_MAX` / `GATEWAY_RATE_LIMIT_WINDOW_MS`. Over limit returns 429; limiter outage returns 503. See [gateway middleware](gateway/api-gateway/README.md).
+- Existing /api/v1/auth and notification/admin endpoints are preserved. See [client contracts](docs/client-contracts.md).
+- Express checks Redis IP limits, then local JWT/session authentication, route validation, controller, service and repository.
+- Requests normally share 100 API calls per IP per minute, configurable with RATE_LIMIT_MAX/WINDOW_MS. Auth endpoints also have their existing stricter limits. Health/preflight requests are exempt. Standard RateLimit headers and Retry-After describe the applicable limiter.
+- Socket.IO uses WebSocket transport and auth: { token: accessToken }; no gateway cookie/header is required. Session revocation is rechecked after connecting.
+- Active users prefer in-app delivery. Default unread reminders are PUSH at 30 minutes and EMAIL at 24 hours, only SYSTEM/SECURITY, at most two. Reading cancels pending eligible work.
+- Outbox, retry/backoff, idempotency, DLQ/replay, scheduling and per-device push outcomes remain enabled.
+- Email needs RESEND_API_KEY/EMAIL_FROM. Web Push needs VAPID keys/subject and a real browser subscription. Missing provider configuration does not send external messages.
+- /health/live checks the API; /health/ready checks migrations/PostgreSQL/Redis. Admin metrics are under /api/v1/admin/operations/metrics.
 
-See [architecture, local development and verification](docs/microservices.md), [Auth service](services/auth-service/README.md), and [Notification service](services/notification-service/README.md). Earlier phase documents describe implementation history; replace old `backend/src` paths with `services/notification-service/src`, except authentication now lives in `services/auth-service/src`.
-
-This change includes local runtime configuration and verification. CI/CD and deployment are outside the requested scope.
-
-Phase 10 integration verification is complete with isolated storage and mock external providers. See the [verification record and manual demonstration](docs/phase-10.md) and [client contracts](docs/client-contracts.md). Swagger/OpenAPI, CI/CD and deployment are excluded. Real email inbox receipt and browser push display remain separate environment-specific checks. Temporary test infrastructure was removed; no automated test suite is retained.
+Read [the backend guide](backend/README.md) in order. Phase 10 covers local integration verification and client documentation; CI/CD, deployment and Swagger are excluded.

@@ -1,6 +1,6 @@
 # Notification client contracts
 
-Use `http://localhost:8000/api/v1` with the full local Compose stack. The gateway preserves the paths below. IDs are UUID strings except Auth user IDs, which are decimal strings. Clients do not send `userId` to select an owner; the server uses the access token.
+Use `http://localhost:8000/api/v1` with the full local Compose stack. Nginx forwards the paths below to the modular backend. IDs are UUID strings except Auth user IDs, which are decimal strings. Clients do not send `userId` to select an owner; the server uses the access token.
 
 ## Authentication and browser configuration
 
@@ -56,7 +56,7 @@ A successful create returns 201 with `{ "success": true, "message": "Notificatio
 | `GET /notification-deliveries?notificationId=<uuid>` | Returns `data.deliveries` for that owned notification |
 | `GET /notification-deliveries/:id` | Returns `data.delivery` for an owned delivery |
 
-List defaults are page 1, limit 20, unreadOnly false; maximum limit is 100. Delivery rows expose channel, stage, status, attempt_count and provider_message_id. Clients do not create delivery/outbox rows directly.
+List defaults are page 1, limit 20, unreadOnly false; maximum limit is 100. Delivery rows expose channel, stage, status, attempt_count and delivery timestamps; provider/internal error details are omitted. Clients do not create delivery/outbox rows directly.
 
 ## Preferences and browser subscriptions
 
@@ -79,7 +79,7 @@ Do not invent browser subscription keys in Postman for real delivery. Use [push-
 
 ## WebSocket events
 
-Connect Socket.IO to `http://localhost:8000`, with `transports: ["websocket"]` and `auth: { token: accessToken }`. Login/refresh must first set the HttpOnly notificationSocketAccess cookie using credentials: "include". The gateway checks this cookie before upgrading; auth.token must contain the same current access token. After refresh, reconnect with the latest token. Native clients may supply an Authorization Bearer header instead. Do not connect to an API route or request a user room yourself.
+Connect Socket.IO to `http://localhost:8000`, with `transports: ["websocket"]` and `auth: { token: accessToken }`. The backend validates auth.token directly; no socket cookie or extra Authorization header is needed. Do not connect to an API route or request a user room yourself.
 
 | Direction | Event | Payload |
 | --- | --- | --- |
@@ -107,4 +107,4 @@ Admin routes use the same Bearer token but require the current user role to be a
 
 Replay requires the notification to remain unread, the channel enabled and the failure eligible. Concurrent/already-applied replay returns 409. Successful push targets are preserved during partial replay.
 
-Application errors use `{ "success": false, "message": "...", ... }`. Common statuses: 400 invalid input, 401 invalid session, 403 insufficient role, 404 unavailable/other-owner record, 409 conflicting state, 429 gateway IP/auth rate limit, 503 dependency unavailable. Gateway 429 includes `Retry-After`; wait before retrying. WebSocket connection attempts share the gateway's IP budget. A request timeout may have an uncertain outcome: use the original create requestId to retry. Nginx can return its own HTML error on upstream failure, so check response status/content type before assuming JSON.
+Application errors use `{ "success": false, "message": "...", ... }`. Common statuses: 400 invalid input, 401 invalid session, 403 insufficient role, 404 unavailable/other-owner record, 409 conflicting state, 429 API IP/auth rate limit, 503 dependency unavailable. A 429 response includes `Retry-After`; wait before retrying. A request timeout may have an uncertain outcome: use the original create requestId to retry. Nginx can return its own HTML error on upstream failure, so check response status/content type before assuming JSON.

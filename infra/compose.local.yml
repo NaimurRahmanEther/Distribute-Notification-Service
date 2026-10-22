@@ -1,20 +1,6 @@
-# Optional datastore ports for running the Node services directly on the host.
+# Optional ports for direct Node development.
 services:
-  gateway-redis:
-    networks: [gateway-data, local-data]
-    ports: ["127.0.0.1:16383:6379"]
-  auth-db:
-    networks: [auth-data, local-data]
-    ports: ["127.0.0.1:5631:5432"]
-  notification-db:
-    networks: [notification-data, local-data]
+  postgres:
     ports: ["127.0.0.1:5632:5432"]
-  auth-redis:
-    networks: [auth-data, local-data]
-    ports: ["127.0.0.1:16381:6379"]
-  notification-redis:
-    networks: [notification-data, local-data]
+  redis:
     ports: ["127.0.0.1:16382:6379"]
-
-networks:
-  local-data:
