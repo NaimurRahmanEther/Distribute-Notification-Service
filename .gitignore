@@ -25,6 +25,7 @@ Thumbs.db
 *.temp
 
 # Personal project planning and historical phase notes
+AGENTS.md
 /plan.md
 /docs/phase-*.md
 /docs/legacy-backend.md
