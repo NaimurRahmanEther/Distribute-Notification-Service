@@ -49,8 +49,9 @@ async function replay(id, adminId) {
       throw new AppError("Delivery no longer exists", 404);
     }
     const partialPush = delivery.channel === "PUSH" && delivery.status === "SENT";
-    if (failure.replayed_at || failure.replay_count !== delivery.replay_count ||
-        (delivery.status !== "FAILED" && !partialPush)) {
+    const currentRound = failure.replay_count === delivery.replay_count;
+    const canReplay = delivery.status === "FAILED" || partialPush;
+    if (failure.replayed_at || !currentRound || !canReplay) {
       throw new AppError("This failure cannot be replayed", 409);
     }
     if (delivery.read_at) {

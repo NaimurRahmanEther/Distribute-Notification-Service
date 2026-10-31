@@ -12,7 +12,6 @@ const { handshakeSchema, activitySchema, eventSchema } = require("./notification
 async function createNotificationSocket(server) {
   const io = new Server(server, {
     cors: { origin: env.SOCKET_ORIGINS },
-    // WebSocket-only avoids sticky-session requirements across API instances.
     transports: ["websocket"],
     maxHttpBufferSize: 16384,
     allowRequest: (req, callback) => {
@@ -29,7 +28,7 @@ async function createNotificationSocket(server) {
     return user;
   }
 
-  io.use(async (socket, next) => {
+  async function authenticateConnection(socket, next) {
     const parsed = handshakeSchema.safeParse(socket.handshake.auth);
     if (!parsed.success) {
       return next(new Error("An access token is required"));
@@ -41,9 +40,10 @@ async function createNotificationSocket(server) {
     } catch {
       next(new Error("Invalid or expired session"));
     }
-  });
+  }
+  io.use(authenticateConnection);
 
-  io.on("connection", (socket) => {
+  function handleConnection(socket) {
     const userId = socket.data.user.userId;
     socket.join(`user:${userId}`);
     socket.data.activeUntil = 0;
@@ -61,13 +61,20 @@ async function createNotificationSocket(server) {
     }
     socket.data.updatePresence = updatePresence;
 
-    updatePresence(0).then(() => {
-      if (socket.connected) {
-        socket.emit("notification:ready", { heartbeatMs: Math.floor(env.PRESENCE_TTL_MS / 3) });
+    async function sendReady() {
+      try {
+        await updatePresence(0);
+        if (socket.connected) {
+          const heartbeatMs = Math.floor(env.PRESENCE_TTL_MS / 3);
+          socket.emit("notification:ready", { heartbeatMs });
+        }
+      } catch {
+        socket.disconnect(true);
       }
-    }).catch(() => socket.disconnect(true));
+    }
+    sendReady();
 
-    socket.on("presence:update", async (input, acknowledge) => {
+    async function handlePresenceUpdate(input, acknowledge) {
       const reply = typeof acknowledge === "function" ? acknowledge : () => {};
       const parsed = activitySchema.safeParse(input);
       if (!parsed.success) {
@@ -75,22 +82,37 @@ async function createNotificationSocket(server) {
       }
       try {
         await authenticateSocket(socket);
-        socket.data.activeUntil = parsed.data.active ? Date.now() + env.PRESENCE_TTL_MS : 0;
+        socket.data.activeUntil = 0;
+        if (parsed.data.active) {
+          socket.data.activeUntil = Date.now() + env.PRESENCE_TTL_MS;
+        }
         await updatePresence(socket.data.activeUntil);
         reply({ success: true });
       } catch {
         reply({ success: false, message: "Session or presence unavailable" });
         socket.disconnect(true);
       }
-    });
+    }
 
-    socket.on("disconnect", () => {
-      const cleanup = socket.data.presenceWork.then(() => presence.remove(userId, socket.id))
-        .catch(() => log("error", "presence.cleanup_failed"));
+    async function removePresence() {
+      try {
+        await socket.data.presenceWork;
+        await presence.remove(userId, socket.id);
+      } catch {
+        log("error", "presence.cleanup_failed");
+      }
+    }
+
+    function handleDisconnect() {
+      const cleanup = removePresence();
       pendingCleanup.add(cleanup);
       cleanup.finally(() => pendingCleanup.delete(cleanup));
-    });
-  });
+    }
+
+    socket.on("presence:update", handlePresenceUpdate);
+    socket.on("disconnect", handleDisconnect);
+  }
+  io.on("connection", handleConnection);
 
   async function deliverMessage(raw) {
     const parsed = eventSchema.safeParse(JSON.parse(raw));
@@ -135,11 +157,15 @@ async function createNotificationSocket(server) {
     }
   }
 
-  subscriber.on("message", (name, raw) => {
-    if (name === channel) {
-      deliverMessage(raw).catch(() => log("error", "realtime.event_failed"));
+  async function handleRedisMessage(name, raw) {
+    // This connection subscribes only to the notification channel.
+    try {
+      await deliverMessage(raw);
+    } catch {
+      log("error", "realtime.event_failed");
     }
-  });
+  }
+  subscriber.on("message", handleRedisMessage);
   try {
     await subscriber.connect();
     await subscriber.subscribe(channel);
@@ -152,17 +178,13 @@ async function createNotificationSocket(server) {
   let checking = false;
   let checkWork = Promise.resolve();
   async function checkSockets() {
-    if (checking) {
-      return;
-    }
     checking = true;
     try {
       for (const socket of io.sockets.sockets.values()) {
         try {
           await authenticateSocket(socket);
-          if (socket.connected) {
-            await socket.data.updatePresence(socket.data.activeUntil);
-          }
+          // updatePresence already checks whether this socket is connected.
+          await socket.data.updatePresence(socket.data.activeUntil);
         } catch {
           socket.disconnect(true);
         }

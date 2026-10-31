@@ -11,8 +11,13 @@ const outbox = require("../outbox/notification-outbox.service");
 const { selectInitialChannel } = require("../notifications/notification.policy");
 
 function reminderEnabled(type, stage) {
-  return config.enabled && config.types.includes(type) &&
-    (stage === "UNREAD_REMINDER_1" || (stage === "UNREAD_REMINDER_2" && config.maxCount === 2));
+  if (!config.enabled || !config.types.includes(type)) {
+    return false;
+  }
+  if (stage === "UNREAD_REMINDER_1") {
+    return true;
+  }
+  return stage === "UNREAD_REMINDER_2" && config.maxCount === 2;
 }
 
 async function addReminders(notification, client) {
@@ -61,7 +66,8 @@ async function processSchedule(id) {
       return { delayUntil: dueAt };
     }
     const initial = schedule.stage === "INITIAL";
-    if (notification.read_at || (!initial && !reminderEnabled(notification.type, schedule.stage))) {
+    const remindersDisabled = !initial && !reminderEnabled(notification.type, schedule.stage);
+    if (notification.read_at || remindersDisabled) {
       await repository.finish(id, "CANCELLED", "READ_OR_REMINDERS_DISABLED", client);
       await client.query("COMMIT");
       return {};
@@ -83,7 +89,11 @@ async function processSchedule(id) {
       const delivery = await deliveries.create({ notificationId: notification.id, channel, stage: schedule.stage }, client);
       await outbox.requestDelivery(delivery, client);
     }
-    await repository.finish(id, channel ? "COMPLETED" : "CANCELLED", channel ? null : "NO_ELIGIBLE_CHANNEL", client);
+    if (channel) {
+      await repository.finish(id, "COMPLETED", null, client);
+    } else {
+      await repository.finish(id, "CANCELLED", "NO_ELIGIBLE_CHANNEL", client);
+    }
     if (initial) {
       await addReminders(notification, client);
     } else if (schedule.stage === "UNREAD_REMINDER_1") {

@@ -66,6 +66,14 @@ async function finishPushTargets(record, client) {
   return true;
 }
 
+async function skipDelivery(record, reason, client) {
+  if (record.channel === "PUSH") {
+    await pushTargets.cancelPending(record.id, client);
+  }
+  await repository.finish(record.id, "SKIPPED", reason, 0, null, client);
+  return { status: "SKIPPED" };
+}
+
 async function sendDelivery(job, record, maxAttempts, send, client) {
   const attempt = await repository.start(record.id, client);
   if (!attempt) {
@@ -140,21 +148,14 @@ function createProcessor(send = provider.send) {
 
       const settings = await preferences.getMine(record.user_id, client);
       const cancelRead = record.stage !== "INITIAL" || record.replay_count > 0 || record.scheduled_at;
-      if (!settings[record.channel] || (cancelRead && record.read_at)) {
-        if (record.channel === "PUSH") {
-          await pushTargets.cancelPending(record.id, client);
-        }
-        await repository.finish(record.id, "SKIPPED", null, 0, null, client);
-        return { status: "SKIPPED" };
+      const alreadyRead = cancelRead && record.read_at;
+      if (!settings[record.channel] || alreadyRead) {
+        return await skipDelivery(record, null, client);
       }
       if (record.stage !== "INITIAL") {
         const activity = await presence.getForUser(record.user_id);
         if (!schedules.reminderEnabled(record.type, record.stage) || activity.active) {
-          if (record.channel === "PUSH") {
-            await pushTargets.cancelPending(record.id, client);
-          }
-          await repository.finish(record.id, "SKIPPED", "REMINDER_NOT_ELIGIBLE", 0, null, client);
-          return { status: "SKIPPED" };
+          return await skipDelivery(record, "REMINDER_NOT_ELIGIBLE", client);
         }
       }
       const maxAttempts = Math.min(job.opts.attempts || config.attempts, config.attempts);
@@ -165,8 +166,9 @@ function createProcessor(send = provider.send) {
         await repository.finish(record.id, "FAILED", "ATTEMPTS_EXHAUSTED", 0, null, client);
         throw new UnrecoverableError("ATTEMPTS_EXHAUSTED");
       }
-      if (record.next_attempt_at && new Date(record.next_attempt_at).getTime() > Date.now()) {
-        await job.moveToDelayed(new Date(record.next_attempt_at).getTime(), token);
+      const nextAttemptAt = new Date(record.next_attempt_at).getTime();
+      if (record.next_attempt_at && nextAttemptAt > Date.now()) {
+        await job.moveToDelayed(nextAttemptAt, token);
         throw new DelayedError();
       }
 

@@ -22,7 +22,9 @@ async function register(userId, input) {
     await repository.lockUser(userId, client);
     const existing = await repository.findByEndpoint(input.endpoint, client);
     if (existing) {
-      if (existing.user_id !== userId || existing.p256dh !== input.keys.p256dh || existing.auth !== input.keys.auth) {
+      const sameUser = existing.user_id === userId;
+      const sameKeys = existing.p256dh === input.keys.p256dh && existing.auth === input.keys.auth;
+      if (!sameUser || !sameKeys) {
         throw new AppError("Subscription already registered; unsubscribe before registering again", 409);
       }
       await client.query("COMMIT");

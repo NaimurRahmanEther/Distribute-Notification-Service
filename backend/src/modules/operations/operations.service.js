@@ -25,20 +25,26 @@ async function ready() {
 
 async function metrics() {
   if (!queues) {
-    queues = [config.queueName, config.deadLetterQueueName, schedule.queueName].map(name => {
+    queues = [];
+    const names = [config.queueName, config.deadLetterQueueName, schedule.queueName];
+    for (const name of names) {
       const queue = new Queue(name, { connection: config.producerConnection });
       queue.on("error", () => log("error", "metrics.queue_connection_failed"));
-      return queue;
-    });
+      queues.push(queue);
+    }
   }
   const database = await repository.metrics();
   const queueMetrics = {};
   for (const queue of queues) {
     const counts = await queue.getJobCounts("wait", "active", "delayed", "failed", "completed");
     const [oldest] = await queue.getJobs(["wait"], 0, 0, true);
+    let oldestWaitingSeconds = 0;
+    if (oldest) {
+      oldestWaitingSeconds = Math.max(0, (Date.now() - oldest.timestamp) / 1000);
+    }
     queueMetrics[queue.name] = {
       ...counts,
-      oldestWaitingSeconds: oldest ? Math.max(0, (Date.now() - oldest.timestamp) / 1000) : 0,
+      oldestWaitingSeconds,
     };
   }
   return { collectedAt: new Date().toISOString(), database, queues: queueMetrics };

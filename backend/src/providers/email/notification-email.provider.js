@@ -1,15 +1,7 @@
 const { UnrecoverableError } = require("bullmq");
 const env = require("../../config/env");
 const { createEmail } = require("./notification-email.template");
-
-function retryDelay(value) {
-  if (!value) {
-    return 0;
-  }
-  const seconds = Number(value);
-  const milliseconds = Number.isFinite(seconds) ? seconds * 1000 : Date.parse(value) - Date.now();
-  return Number.isFinite(milliseconds) ? Math.max(0, milliseconds) : 0;
-}
+const retryAfterMs = require("../../shared/utils/retry-after");
 
 async function send(notification, delivery, { signal, idempotencyKey }) {
   signal.throwIfAborted();
@@ -41,7 +33,7 @@ async function send(notification, delivery, { signal, idempotencyKey }) {
       throw new UnrecoverableError("EMAIL_REQUEST_REJECTED");
     }
     const error = new Error("EMAIL_PROVIDER_UNAVAILABLE");
-    error.retryAfterMs = retryDelay(response.headers.get("retry-after"));
+    error.retryAfterMs = retryAfterMs(response.headers.get("retry-after"));
     throw error;
   }
 

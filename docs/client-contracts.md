@@ -1,5 +1,7 @@
 # Notification client contracts
 
+Baseline: 30 October 2026. This is the REST and real-time integration reference for the implemented local service. See [requirements](requirements.md) for product policies, [technical specification](technical-specification.md) for persistence/queue details, and [verification](verification.md) for exercised paths and gaps.
+
 Use `http://localhost:8000/api/v1` with the full local Compose stack. Nginx forwards the paths below to the modular backend. IDs are UUID strings except Auth user IDs, which are decimal strings. Clients do not send `userId` to select an owner; the server uses the access token.
 
 ## Authentication and browser configuration
@@ -108,3 +110,114 @@ Admin routes use the same Bearer token but require the current user role to be a
 Replay requires the notification to remain unread, the channel enabled and the failure eligible. Concurrent/already-applied replay returns 409. Successful push targets are preserved during partial replay.
 
 Application errors use `{ "success": false, "message": "...", ... }`. Common statuses: 400 invalid input, 401 invalid session, 403 insufficient role, 404 unavailable/other-owner record, 409 conflicting state, 429 API IP/auth rate limit, 503 dependency unavailable. A 429 response includes `Retry-After`; wait before retrying. A request timeout may have an uncertain outcome: use the original create requestId to retry. Nginx can return its own HTML error on upstream failure, so check response status/content type before assuming JSON.
+
+## Complete endpoint inventory
+
+Paths in this table include the `/api/v1` prefix. `User` means a valid access token and current database session. Admin routes also check the current database role. Default success is 200; deletes return a JSON success envelope rather than 204.
+
+| Method | Path | Access | Success | Response data |
+| --- | --- | --- | --- | --- |
+| GET | `/health` | Public | 200 | Standard envelope, message that service is running |
+| GET | `/health/live` | Public | 200 | Raw `{ "status": "alive" }` |
+| GET | `/health/ready` | Public | 200 / 503 | Raw `{ "status": "ready" }` or `{ "status": "unavailable" }` |
+| POST | `/api/v1/auth/register` | Public | 201 | `user` |
+| POST | `/api/v1/auth/login` | Public | 200 | `user`, `accessToken`, `tokenType`; refresh cookie in header |
+| POST | `/api/v1/auth/refresh` | Refresh cookie | 200 | `accessToken`, `tokenType` |
+| POST | `/api/v1/auth/logout` | Refresh cookie if present | 200 | `null`; matching cookie cleared |
+| POST | `/api/v1/notifications` | User | 201 | `notification`; also 201 on matching idempotent retry |
+| GET | `/api/v1/notifications` | User | 200 | `notifications`; pagination in top-level `meta` |
+| GET | `/api/v1/notifications/:id` | User/owner | 200 | `notification` |
+| PATCH | `/api/v1/notifications/:id/read` | User/owner | 200 | `notification` |
+| PATCH | `/api/v1/notifications/read-all` | User | 200 | `updatedCount` |
+| DELETE | `/api/v1/notifications/:id` | User/owner | 200 | `null` |
+| GET | `/api/v1/notification-deliveries?notificationId=<uuid>` | User/owner | 200 | `deliveries` |
+| GET | `/api/v1/notification-deliveries/:id` | User/owner | 200 | `delivery` |
+| GET | `/api/v1/notification-preferences` | User | 200 | `preferences` |
+| PUT | `/api/v1/notification-preferences` | User | 200 | `preferences` |
+| GET | `/api/v1/push-subscriptions/public-key` | User | 200 | `publicKey`; 503 when unconfigured |
+| POST | `/api/v1/push-subscriptions` | User | 201 | `subscription` with `id`, `created_at` |
+| GET | `/api/v1/push-subscriptions` | User | 200 | `subscriptions` with IDs/timestamps only |
+| DELETE | `/api/v1/push-subscriptions/:id` | User/owner | 200 | `null` |
+| GET | `/api/v1/admin/dead-letters` | Admin | 200 | `deadLetters` |
+| GET | `/api/v1/admin/dead-letters/:id` | Admin | 200 | `deadLetter` |
+| POST | `/api/v1/admin/dead-letters/:id/replay` | Admin | 202 | `replay` |
+| GET | `/api/v1/admin/operations/metrics` | Admin | 200 | `collectedAt`, `database`, `queues` |
+
+There is no separate public scheduling endpoint: use `scheduledAt` on creation. There is no public send-to-user, session-listing, role-management, or account-recovery endpoint.
+
+## Request validation reference
+
+| Operation | Accepted input and limits |
+| --- | --- |
+| Register | `fullName`: trimmed string 1..100; `email`: trimmed valid email up to 255; `password`: 8..72 characters and at most 72 UTF-8 bytes |
+| Login | Same email/password constraints; email normalization is server-side |
+| Create notification | Required type/title/message; trimmed title 1..200, message 1..5000; optional JSON `data`, UUID `requestId`, ISO datetime with timezone `scheduledAt` |
+| List notifications | `page`: coerced integer 1..1000000, default 1; `limit`: 1..100, default 20; `unreadOnly`: literal `true`/`false`, default false; optional supported `type` |
+| ID route | UUID string `id` |
+| List deliveries | Required UUID `notificationId`; no pagination fields |
+| Update preferences | Exactly `IN_APP`, `EMAIL`, `PUSH`, all booleans; partial update is rejected |
+| Register subscription | Endpoint max 2048, allowed HTTPS push host; optional null/nonnegative numeric `expirationTime` in milliseconds, not expired; strict `keys` object with P-256 `p256dh` and base64url `auth` |
+| List dead letters | `page`/`limit` same bounds/defaults as notification list; no other filters |
+| Replay | JSON body `{}`; unknown fields rejected |
+
+Notification, preference, subscription, delivery-query, dead-letter, and ID schemas reject unknown fields. Auth schemas parse their declared fields and strip unknown fields under the current Zod object behavior; clients should send only documented fields. Refresh/logout do not require JSON credentials in a body.
+
+`data` is accepted as JSON metadata, including non-object JSON values; omission stores `{}`. It is not separately schema-constrained by business fields. Overall HTTP body-size limits still apply. `scheduledAt` is checked against current time when creating new work; matching idempotent retries return the previously created item even if its scheduled time is now in the past.
+
+For subscription registration, an identical endpoint/key pair for the same owner returns the existing ID with 201. Other owner/key conflicts or more than 20 devices return 409. The API does not return stored subscription endpoints/private key material in list responses.
+
+## Response examples
+
+Examples illustrate shape; UUIDs, timestamps, and counts are sample values.
+
+```json
+{
+  "success": true,
+  "message": "Success",
+  "data": {
+    "notifications": [
+      {
+        "id": "7a6fd9ad-b381-4f57-92e9-bbc9cb9c1b76",
+        "user_id": "1",
+        "type": "SYSTEM",
+        "title": "Account update",
+        "message": "Your settings changed.",
+        "data": {},
+        "read_at": null,
+        "scheduled_at": null,
+        "request_id": null,
+        "created_at": "2026-10-30T12:00:00.000Z"
+      }
+    ]
+  },
+  "meta": { "page": 1, "limit": 20, "total": 1, "totalPages": 1 }
+}
+```
+
+Empty lists have an empty array; notification `totalPages` is zero when total is zero. Pagination is offset-based and ordered by creation time then ID, descending. Concurrent inserts can shift pages; clients should deduplicate/refetch as appropriate.
+
+```json
+{
+  "success": false,
+  "message": "Validation failed",
+  "errors": { "title": ["Example field validation message"] }
+}
+```
+
+Exact Zod message wording is not a stable application contract. Shape-level/unknown-key validation may have an empty field-error object. Unexpected 5xx errors hide internal details. Some middleware/parser and proxy errors do not share all route-validation semantics.
+
+Delivery statuses are `PENDING`, `PROCESSING`, `RETRYING`, `SENT`, `FAILED`, `SKIPPED`, and `CANCELLED`. The public delivery projection includes `id`, `notification_id`, `channel`, `stage`, `status`, `attempt_count`, `next_attempt_at`, `sent_at`, `created_at`, and `updated_at`. A `SENT` push delivery can have failed individual targets; administrators can inspect failure detail.
+
+Dead-letter list rows include failure ID, delivery ID, replay count, reason, attempts, failure/publication/replay timestamps, and joined channel/stage/delivery status. They do not directly include a notification ID; use the delivery association when correlating records. Dead-letter listing returns a page-sized array without a total-count `meta` object. Details add `jobId` and push `targets`.
+
+## Rate limits, request IDs, and client recovery
+
+All `/api/v1` routes share the configured IP budget (default 100 requests/60 seconds), including authentication requests. Additional IP budgets are register 5/15 minutes, login 10/15 minutes, and refresh/logout 30/minute. Normal CORS preflight is handled before the limiter; health routes are outside its mount.
+
+Rate-limited responses use 429 with `Retry-After` and standard rate-limit headers. Multiple limiters can apply to auth requests; headers describe the limiter that produced/set them, not separate independent user quotas. A limiter store failure normally returns 503. Wait before retrying rather than immediately reissuing requests.
+
+`X-Request-Id` is returned for application requests. Nginx supplies an ID; direct API calls get an accepted well-shaped forwarded ID or a generated UUID. Current browser CORS exposure lists Retry-After/RateLimit headers, not `X-Request-Id`; browser JavaScript cannot necessarily read that header across origins without a configuration/code change. It is not the same as the notification creation `requestId`.
+
+Refresh changes the access token for the existing session and does not rotate the refresh cookie. A fresh login revokes earlier sessions for that user. On token refresh, replace socket auth and reconnect. On logout, remove browser subscriptions first if the user intends to stop that device's push messages.
+
+After an uncertain notification-create outcome, retry with the same original request ID/content. Do not assume an HTTP timeout means no notification was created. A create 201 confirms persistence, not completed delivery. After a missed socket connection, refetch the inbox; events have no durable sequence/replay cursor.

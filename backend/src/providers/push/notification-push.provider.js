@@ -4,6 +4,7 @@ const env = require("../../config/env");
 const { isConfigured, isAllowedEndpoint } = require("../../config/push");
 const targets = require("./push-target.repository");
 const subscriptions = require("../../modules/notification/subscriptions/push-subscription.repository");
+const retryAfter = require("../../shared/utils/retry-after");
 
 function unavailable() {
   const error = new UnrecoverableError("PUSH_UNAVAILABLE");
@@ -76,12 +77,8 @@ async function send(notification, delivery, { signal, client }) {
       await subscriptions.removeForUser(delivery.user_id, device.subscription_id, client);
       await targets.finish(delivery.id, device.subscription_id, "CANCELLED", "SUBSCRIPTION_EXPIRED", client);
     } else if ([408, 429].includes(response.status) || response.status >= 500) {
-      const header = response.headers.get("retry-after");
-      const seconds = Number(header);
-      const wait = Number.isFinite(seconds) ? seconds * 1000 : Date.parse(header) - Date.now();
-      if (Number.isFinite(wait)) {
-        retryAfterMs = Math.max(retryAfterMs, wait);
-      }
+      const wait = retryAfter(response.headers.get("retry-after"));
+      retryAfterMs = Math.max(retryAfterMs, wait);
       await targets.finish(delivery.id, device.subscription_id, "RETRYING", "PUSH_TEMPORARY_FAILURE", client);
     } else {
       await targets.finish(delivery.id, device.subscription_id, "FAILED", "PUSH_REQUEST_REJECTED", client);

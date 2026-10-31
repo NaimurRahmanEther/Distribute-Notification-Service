@@ -38,7 +38,6 @@ const idSchema = z.object({
 }).strict();
 
 module.exports = {
-  createSchema,
   validateCreate: validate(createSchema),
   validateList: validate(listSchema, "query"),
   validateId: validate(idSchema, "params"),

@@ -28,7 +28,3 @@ Thumbs.db
 /plan.md
 /docs/phase-*.md
 /docs/legacy-backend.md
-
-# Local migration backups; never publish secrets or retired code
-/infra/legacy/
-/.legacy-code/

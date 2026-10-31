@@ -2,6 +2,8 @@
 
 This is one application with clear modules. Read the [root setup](../README.md) before starting it.
 
+The [documentation index](../docs/README.md) links the requirements, architecture, technical specification, API contracts, development guide, and verification record. Use this page as a source reading order rather than a duplicate specification.
+
 1. src/server.js starts HTTP, Socket.IO and graceful shutdown.
 2. src/app.js shows middleware order and routes.
 3. src/config/env.js defines environment settings; db.js and redis.js create shared connections.

@@ -37,12 +37,29 @@ function createShutdown(name) {
     log("info", "process.stopped", { process: name });
   }
 
-  return { get stopping() { return controller.signal.aborted; }, stop, wait, finish };
+  return {
+    get stopping() {
+      return controller.signal.aborted;
+    },
+    stop,
+    wait,
+    finish,
+  };
 }
 
 async function closeResources(closers) {
-  const results = await Promise.allSettled(closers.map(close => Promise.resolve().then(close)));
-  if (results.some(result => result.status === "rejected")) {
+  let failed = false;
+  async function closeResource(close) {
+    try {
+      await close();
+    } catch {
+      failed = true;
+    }
+  }
+
+  // Close this group together; one failure must not prevent the other closes.
+  await Promise.all(closers.map(closeResource));
+  if (failed) {
     process.exitCode = 1;
     log("error", "process.cleanup_failed");
   }

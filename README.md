@@ -14,6 +14,19 @@ Browser -> Nginx -> Express backend -> PostgreSQL
 
 The API, worker and outbox are three processes from the same backend package. They are not independent microservices.
 
+## Documentation
+
+Start with the [documentation index](docs/README.md) for the complete development baseline.
+
+| Topic | Document |
+| --- | --- |
+| Business purpose, scope, product rules, requirements, acceptance criteria | [BRD and PRD](docs/requirements.md) |
+| Architecture, module boundaries, flow diagrams, design decisions | [Software design](docs/architecture.md) |
+| Database, queues, providers, configuration, security boundaries | [Technical specification](docs/technical-specification.md) |
+| REST, authentication, WebSockets, browser push | [API and client contracts](docs/client-contracts.md) |
+| Installation, migrations, local admin setup, troubleshooting | [Development guide](docs/development-guide.md) |
+| Recorded checks, requirement traceability, remaining test gaps | [Verification](docs/verification.md) |
+
 ## Folder structure
 
 ```text
@@ -47,7 +60,7 @@ docker compose logs -f backend worker outbox
 
 Public URL: http://localhost:8000 (root PORT). Only Nginx publishes a port. Migrations run before the API starts. PostgreSQL and Redis persist in monolith-specific named volumes. docker compose down stops the stack without deleting its data.
 
-Previous microservice/legacy volumes are untouched and are not automatically imported. Do not point the new backend at a notification-only database: it needs the users/session tables and foreign keys defined by the monolith migrations. Existing local environment backups are ignored under infra/legacy/; retired source is ignored under .legacy-code/.
+Previous database volumes are untouched and are not automatically imported. Do not point the backend at a notification-only database: it needs the users/session tables and foreign keys defined by the monolith migrations.
 
 ## Direct Node development
 
@@ -66,7 +79,7 @@ Copy backend/.env.example to backend/.env only if absent, then match its DATABAS
 
 ## Behavior
 
-Migration layout: each application table has one create migration and its matching rollback file. Columns and constraints live in that table's original CREATE TABLE. These consolidated files initialize a fresh database; editing them does not update an existing database that already recorded the migration. Migration numbers may contain gaps.
+Migration layout: each application table has one create migration and its matching rollback file, numbered 001–010. Columns and constraints live in that table's original CREATE TABLE. These consolidated files initialize a fresh database; editing or renaming them does not update an existing database's recorded migration history.
 
 - Existing /api/v1/auth and notification/admin endpoints are preserved. See [client contracts](docs/client-contracts.md).
 - Express checks Redis IP limits, then local JWT/session authentication, route validation, controller, service and repository.
@@ -77,4 +90,4 @@ Migration layout: each application table has one create migration and its matchi
 - Email needs RESEND_API_KEY/EMAIL_FROM. Web Push needs VAPID keys/subject and a real browser subscription. Missing provider configuration does not send external messages.
 - /health/live checks the API; /health/ready checks migrations/PostgreSQL/Redis. Admin metrics are under /api/v1/admin/operations/metrics.
 
-Read [the backend guide](backend/README.md) in order. Phase 10 covers local integration verification and client documentation; CI/CD, deployment and Swagger are excluded.
+Read [the backend guide](backend/README.md) for a source reading order. This baseline covers local development; production deployment and CI/CD are outside its scope. Implemented behavior and locally verified behavior are distinguished in the [verification record](docs/verification.md).
