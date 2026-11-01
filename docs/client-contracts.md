@@ -210,6 +210,8 @@ Delivery statuses are `PENDING`, `PROCESSING`, `RETRYING`, `SENT`, `FAILED`, `SK
 
 Dead-letter list rows include failure ID, delivery ID, replay count, reason, attempts, failure/publication/replay timestamps, and joined channel/stage/delivery status. They do not directly include a notification ID; use the delivery association when correlating records. Dead-letter listing returns a page-sized array without a total-count `meta` object. Details add `jobId` and push `targets`.
 
+Admin metrics include seven queue entries: `notification-delivery-in-app`, `notification-delivery-email`, `notification-delivery-push`, `notification-dead-letter-in-app`, `notification-dead-letter-email`, `notification-dead-letter-push`, and `notification-schedule`. Each entry contains job-state counts and `oldestWaitingSeconds`. These are snapshots, not lifetime totals. Delivery limits are applied per channel queue; a push job can represent multiple devices.
+
 ## Rate limits, request IDs, and client recovery
 
 All `/api/v1` routes share the configured IP budget (default 100 requests/60 seconds), including authentication requests. Additional IP budgets are register 5/15 minutes, login 10/15 minutes, and refresh/logout 30/minute. Normal CORS preflight is handled before the limiter; health routes are outside its mount.

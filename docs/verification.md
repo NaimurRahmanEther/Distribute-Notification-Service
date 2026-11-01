@@ -21,6 +21,24 @@ This record is evidence of the exercised paths. It is not exhaustive test covera
 
 ## 2. Requirement traceability
 
+### 1 November 2026: channel queues and database capacity
+
+The queue split was verified locally with three delivery queues, three channel DLQs, and one scheduling queue. Live checks exercised routing, initial push-to-email fallback with unconfigured providers, dead-letter publication/replay guards, ownership, sessions, subscriptions, and scheduled in-app delivery. Twenty-eight isolated scenario groups covered worker guards, retries/timeouts, simulated email/push outcomes, and client cleanup. Separate checks exercised Redis-backed HTTP limiting/reset and BullMQ job-start throttling. Real external sends were not performed.
+
+After adding database-capacity validation and shared provider-client lookup:
+
+- All 88 JavaScript source files passed syntax checks.
+- Thirteen configuration cases passed, covering defaults, exact minimum capacity, unequal channel concurrency, upper concurrency boundaries, undersized pools, and invalid pool values.
+- IN_APP, EMAIL, and PUSH processor/provider/auth-repository checks confirmed the original delivery client is passed through; acquiring a second pool connection was forbidden by the test.
+- A real PostgreSQL test set `DB_POOL_MAX=14`, occupied all 14 connections, and completed nine concurrent provider calls plus five other held-client queries (three schedule slots and two background/headroom slots) without pool waiters. Email responses and the push strategy were simulated; no real external message was sent. This tests connection reuse at capacity, not maximum throughput or provider delivery.
+- A rebuilt local stack passed login, default preferences, immediate IN_APP delivery, scheduled IN_APP delivery, and read-update checks using `DB_POOL_MAX=20`.
+- Documentation checks covered all 47 environment settings and 48 local links/anchors at that point in the update.
+- Temporary accounts and scoped queue artifacts were removed. Checks ran from stdin; no persistent test files were added.
+
+The pool cap is per process. These checks do not establish safe aggregate connection counts for arbitrary replicas, another database server, or other applications sharing PostgreSQL. Use the [connection budget](technical-specification.md#database-capacity-and-concurrency).
+
+### Requirement mapping
+
 Paths below are relative to `backend/src`. **Partial** means implemented behavior was reviewed but not every acceptance path was exercised.
 
 | Requirement | Main implementation | Verification status / scope |

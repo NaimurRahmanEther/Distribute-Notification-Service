@@ -3,8 +3,8 @@ const { log } = require("../shared/utils/logger");
 const config = require("../config/queue");
 const { jobSchema, jobName, deliveryJobId } = require("./notification-job");
 
-function createNotificationQueue() {
-  const queue = new Queue(config.queueName, {
+function createNotificationQueue(channel) {
+  const queue = new Queue(config.channels[channel].queueName, {
     connection: config.producerConnection,
     defaultJobOptions: {
       attempts: config.attempts,
@@ -15,6 +15,10 @@ function createNotificationQueue() {
   });
   queue.on("error", () => log("error", "delivery.queue_connection_failed"));
   return queue;
+}
+
+function createNotificationQueues() {
+  return Object.fromEntries(Object.keys(config.channels).map(channel => [channel, createNotificationQueue(channel)]));
 }
 
 async function withPublishTimeout(publishPromise) {
@@ -32,10 +36,10 @@ async function withPublishTimeout(publishPromise) {
   }
 }
 
-async function publishDelivery(queue, payload) {
+async function publishDelivery(queues, payload) {
   const data = jobSchema.parse(payload);
-  const publishPromise = queue.add(jobName, data, { jobId: deliveryJobId(data.deliveryId, data.replayCount) });
+  const publishPromise = queues[data.channel].add(jobName, data, { jobId: deliveryJobId(data.deliveryId, data.replayCount) });
   return withPublishTimeout(publishPromise);
 }
 
-module.exports = { createNotificationQueue, publishDelivery, withPublishTimeout };
+module.exports = { createNotificationQueue, createNotificationQueues, publishDelivery, withPublishTimeout };

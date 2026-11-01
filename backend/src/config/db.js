@@ -4,7 +4,7 @@ const { log } = require("../shared/utils/logger");
 
 const pool = new Pool({
   connectionString: env.DATABASE_URL,
-  max: 50,
+  max: env.DB_POOL_MAX,
   idleTimeoutMillis: 30000,
   connectionTimeoutMillis: 5000,
 });

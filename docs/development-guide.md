@@ -28,6 +28,8 @@ Edit `.env` locally. Choose `POSTGRES_USER`, `POSTGRES_PASSWORD`, and `POSTGRES_
 
 Do not commit local `.env` files. The checked-in example secrets are placeholders. Changing database variables does not rewrite credentials in an already-initialized PostgreSQL volume.
 
+`DB_POOL_MAX` defaults to 20 connections per process. With default concurrency 3 for IN_APP, EMAIL, PUSH, and scheduling, consumers need 12 connections plus 2 for background work/headroom. Keep the sum of those concurrency values plus 2 within the pool; invalid combinations fail startup. Concurrency is per process, while channel rate limits are shared across worker replicas. Increasing the pool also increases the stack's possible database connections, so check [database capacity](technical-specification.md#database-capacity-and-concurrency) before increasing it or running replicas.
+
 ### Start and inspect
 
 ```powershell
@@ -165,6 +167,8 @@ Subscribe, save the returned subscription ID for that user/device, enable `PUSH`
 | Protected API returns 503 during Redis outage | Global limiter normally fails closed; restore Redis |
 | Inbox exists but no live notification | Confirm `IN_APP`, active socket/session, event listener setup, Redis Pub/Sub, worker and outbox; refetch REST inbox |
 | Notification stays pending | Check worker/outbox processes, queue connectivity, current preferences, due time, and admin metrics |
+| Startup reports `DB_POOL_MAX must be at least ...` | Lower combined delivery/schedule concurrency or raise the pool within PostgreSQL's total connection budget; recreate affected processes |
+| Database reports too many clients / pool connection timeouts | Count every process/replica, inspect held provider work and database health, and align pool/concurrency values; do not blindly increase all pool caps |
 | Scheduled item cannot be fetched | It is hidden before `scheduled_at`; create response still provides its ID |
 | Scheduled item visible but not delivered | Visibility follows time; inspect schedule/delivery processing separately |
 | Push public-key route returns 503 | All VAPID settings must be present; then validate actual key compatibility with a real browser |

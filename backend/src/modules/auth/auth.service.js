@@ -227,8 +227,8 @@ async function authenticateAccessToken(accessToken) {
   return { ...user, sessionId: payload.sid };
 }
 
-async function getUserById(userId) {
-  const user = await authRepository.findById(userId);
+async function getUserById(userId, db) {
+  const user = await authRepository.findById(userId, db);
   if (!user) {
     throw new AppError("User not found", 404);
   }

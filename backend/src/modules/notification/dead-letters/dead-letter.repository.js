@@ -53,8 +53,10 @@ async function markReplayed(id, adminId, client) {
 
 async function claimNext(client) {
   const { rows } = await client.query(
-    `SELECT * FROM notification_dead_letters WHERE published_at IS NULL AND next_publish_at <= NOW()
-     ORDER BY next_publish_at, id LIMIT 1 FOR UPDATE SKIP LOCKED`
+    `SELECT f.*, d.channel FROM notification_dead_letters f
+     JOIN notification_deliveries d ON d.id = f.delivery_id
+     WHERE f.published_at IS NULL AND f.next_publish_at <= NOW()
+     ORDER BY f.next_publish_at, f.id LIMIT 1 FOR UPDATE OF f SKIP LOCKED`
   );
   return rows[0];
 }

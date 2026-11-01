@@ -2,18 +2,18 @@ const { createShutdown, closeResources } = require("../shared/utils/shutdown");
 const { log } = require("../shared/utils/logger");
 const { pool } = require("../config/db");
 const config = require("../config/queue");
-const { createNotificationQueue } = require("../queue/notification.queue");
+const { createNotificationQueues } = require("../queue/notification.queue");
 const { dispatchNext } = require("./outbox-dispatcher");
 
 async function main() {
-  const queue = createNotificationQueue();
+  const queues = createNotificationQueues();
   const shutdown = createShutdown("outbox");
   log("info", "process.started", { process: "outbox" });
   try {
     while (!shutdown.stopping) {
       try {
         for (let i = 0; i < 25 && !shutdown.stopping; i++) {
-          const handled = await dispatchNext(queue);
+          const handled = await dispatchNext(queues);
           if (!handled) {
             break;
           }
@@ -27,7 +27,8 @@ async function main() {
     }
   } finally {
     shutdown.stop();
-    await closeResources([() => queue.close(), () => pool.end()]);
+    await closeResources(Object.values(queues).map(queue => () => queue.close()));
+    await closeResources([() => pool.end()]);
     shutdown.finish();
   }
 }

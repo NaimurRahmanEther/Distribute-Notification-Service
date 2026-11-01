@@ -14,7 +14,7 @@ const strategies = new Map([
 async function send(notification, delivery, options) {
   options.signal.throwIfAborted();
   try {
-    const user = await auth.getUserById(notification.user_id);
+    const user = await auth.getUserById(notification.user_id, options.client);
     notification.recipient_email = user.email;
   } catch (error) {
     if (error.statusCode === 404) {

@@ -3,10 +3,10 @@ const { createShutdown, closeResources } = require("../shared/utils/shutdown");
 const { log } = require("../shared/utils/logger");
 const { pool } = require("../config/db");
 const config = require("../config/queue");
-const { createNotificationQueue } = require("../queue/notification.queue");
+const { createNotificationQueues } = require("../queue/notification.queue");
 const { createProcessor, reconcileFailures } = require("./delivery.processor");
 const { closeRealtimeConnection } = require("../config/realtime");
-const { createDeadLetterQueue } = require("../queue/dead-letter.queue");
+const { createDeadLetterQueues } = require("../queue/dead-letter.queue");
 const { dispatchDeadLetter } = require("./dead-letter-dispatcher");
 const scheduleConfig = require("../config/schedule");
 const { createScheduleQueue } = require("../queue/notification-schedule.queue");
@@ -14,8 +14,8 @@ const { processScheduleJob } = require("./schedule.processor");
 const { dispatchSchedule } = require("./schedule-dispatcher");
 
 async function main() {
-  const queue = createNotificationQueue();
-  const deadLetterQueue = createDeadLetterQueue();
+  const queues = createNotificationQueues();
+  const deadLetterQueues = createDeadLetterQueues();
   const scheduleQueue = createScheduleQueue();
   const scheduleWorker = new Worker(scheduleConfig.queueName, processScheduleJob, {
     connection: config.workerConnection,
@@ -24,13 +24,17 @@ async function main() {
   });
   scheduleWorker.on("error", () => log("error", "schedule.connection_failed"));
   scheduleWorker.on("failed", job => log("error", "schedule.job_failed", { jobId: job?.id, scheduleId: job?.data?.scheduleId }));
-  const worker = new Worker(config.queueName, createProcessor(), {
-    connection: config.workerConnection,
-    concurrency: config.concurrency,
-    maxStalledCount: 2,
+  const workers = Object.entries(config.channels).map(([channel, settings]) => {
+    const worker = new Worker(settings.queueName, createProcessor(undefined, channel), {
+      connection: config.workerConnection,
+      concurrency: settings.concurrency,
+      limiter: settings.limiter,
+      maxStalledCount: 2,
+    });
+    worker.on("error", () => log("error", "delivery.connection_failed", { channel }));
+    worker.on("failed", job => log("error", "delivery.job_failed", { channel, jobId: job?.id, deliveryId: job?.data?.deliveryId }));
+    return worker;
   });
-  worker.on("error", () => log("error", "delivery.connection_failed"));
-  worker.on("failed", job => log("error", "delivery.job_failed", { jobId: job?.id, deliveryId: job?.data?.deliveryId, notificationId: job?.data?.notificationId }));
 
   const shutdown = createShutdown("worker");
   let cursor = null;
@@ -38,7 +42,7 @@ async function main() {
   try {
     while (!shutdown.stopping) {
       try {
-        cursor = await reconcileFailures(queue, cursor);
+        cursor = await reconcileFailures(queues, cursor);
       } catch {
         log("error", "delivery.reconciliation_failed");
       }
@@ -53,7 +57,7 @@ async function main() {
       }
       try {
         for (let count = 0; count < 25 && !shutdown.stopping; count++) {
-          if (!await dispatchDeadLetter(deadLetterQueue)) {
+          if (!await dispatchDeadLetter(deadLetterQueues)) {
             break;
           }
         }
@@ -66,9 +70,9 @@ async function main() {
     }
   } finally {
     shutdown.stop();
-    // Stop both consumers together, then release their dependencies.
-    await closeResources([() => scheduleWorker.close(), () => worker.close()]);
-    await closeResources([() => queue.close(), () => deadLetterQueue.close(), () => scheduleQueue.close()]);
+    // Stop all consumers together, then release their dependencies.
+    await closeResources([() => scheduleWorker.close(), ...workers.map(worker => () => worker.close())]);
+    await closeResources([...Object.values(queues).map(queue => () => queue.close()), ...Object.values(deadLetterQueues).map(queue => () => queue.close()), () => scheduleQueue.close()]);
     closeRealtimeConnection();
     await closeResources([() => pool.end()]);
     shutdown.finish();

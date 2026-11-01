@@ -26,7 +26,7 @@ async function ready() {
 async function metrics() {
   if (!queues) {
     queues = [];
-    const names = [config.queueName, config.deadLetterQueueName, schedule.queueName];
+    const names = [...Object.values(config.channels).flatMap(channel => [channel.queueName, channel.deadLetterQueueName]), schedule.queueName];
     for (const name of names) {
       const queue = new Queue(name, { connection: config.producerConnection });
       queue.on("error", () => log("error", "metrics.queue_connection_failed"));

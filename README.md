@@ -87,6 +87,8 @@ Migration layout: each application table has one create migration and its matchi
 - Socket.IO uses WebSocket transport and auth: { token: accessToken }; no gateway cookie/header is required. Session revocation is rechecked after connecting.
 - Active users prefer in-app delivery. Default unread reminders are PUSH at 30 minutes and EMAIL at 24 hours, only SYSTEM/SECURITY, at most two. Reading cancels pending eligible work.
 - Outbox, retry/backoff, idempotency, DLQ/replay, scheduling and per-device push outcomes remain enabled.
+- IN_APP, EMAIL, and PUSH each have a delivery queue, rate limit, and DLQ; one additional queue handles scheduling. Rate limits count jobs, not individual device requests.
+- `DB_POOL_MAX` defaults to 20 per process. The sum of three delivery concurrency settings and `WORKER_CONCURRENCY` (scheduling), plus 2 background/headroom connections, must fit the pool. Defaults are 12 consumer jobs and a minimum pool of 14; invalid combinations fail startup. See [capacity budgeting](docs/technical-specification.md#database-capacity-and-concurrency).
 - Email needs RESEND_API_KEY/EMAIL_FROM. Web Push needs VAPID keys/subject and a real browser subscription. Missing provider configuration does not send external messages.
 - /health/live checks the API; /health/ready checks migrations/PostgreSQL/Redis. Admin metrics are under /api/v1/admin/operations/metrics.
 

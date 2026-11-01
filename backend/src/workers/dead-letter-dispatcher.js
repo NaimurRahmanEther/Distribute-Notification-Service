@@ -3,7 +3,7 @@ const config = require("../config/queue");
 const repository = require("../modules/notification/dead-letters/dead-letter.repository");
 const { publishDeadLetter } = require("../queue/dead-letter.queue");
 
-async function dispatchDeadLetter(queue) {
+async function dispatchDeadLetter(queues) {
   const client = await pool.connect();
   let connectionError;
   try {
@@ -15,7 +15,7 @@ async function dispatchDeadLetter(queue) {
     }
     let published = false;
     try {
-      await publishDeadLetter(queue, failure);
+      await publishDeadLetter(queues, failure);
       published = true;
     } catch {
       // Durable intent stays in PostgreSQL until publication succeeds.

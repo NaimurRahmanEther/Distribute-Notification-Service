@@ -8,6 +8,8 @@
 | Authority | Executable source and database migrations define current behavior |
 | Maintenance | Update requirements, contracts, design, and verification together when behavior changes |
 
+Queue topology and pool/concurrency configuration were updated on 1 November 2026. See the [technical specification](technical-specification.md) for the seven queues, per-channel settings, and database connection budget. Historical verification records retain their original dates and scope.
+
 This documentation combines the useful parts of a Business Requirements Document (BRD), Product Requirements Document (PRD), Software Design Document (SDD), and Technical Specification Document (TSD). Each topic has one primary home to avoid conflicting copies.
 
 ## Reading paths

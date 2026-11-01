@@ -33,6 +33,7 @@ async function sendWithTimeout(send, record, client) {
     const sending = send(record, record, {
       signal: controller.signal,
       idempotencyKey: record.id,
+      client,
     });
     return await Promise.race([sending, timeout]);
   } finally {
@@ -118,10 +119,10 @@ async function sendDelivery(job, record, maxAttempts, send, client) {
   return { status: "SENT" };
 }
 
-function createProcessor(send = provider.send) {
+function createProcessor(send = provider.send, channel) {
   return async function processDelivery(job, token) {
     const parsed = jobSchema.safeParse(job.data);
-    if (!parsed.success) {
+    if (!parsed.success || (channel && parsed.data.channel !== channel)) {
       throw new UnrecoverableError("INVALID_JOB");
     }
     const data = parsed.data;
@@ -137,6 +138,9 @@ function createProcessor(send = provider.send) {
       const record = await repository.load(data.deliveryId, client);
       if (!record) {
         return { status: "CANCELLED" };
+      }
+      if (channel && record.channel !== channel) {
+        throw new UnrecoverableError("CHANNEL_MISMATCH");
       }
       if (data.replayCount !== record.replay_count) {
         return { status: "STALE" };
@@ -182,10 +186,10 @@ function createProcessor(send = provider.send) {
   };
 }
 
-async function reconcileFailures(queue, afterId = null) {
+async function reconcileFailures(queues, afterId = null) {
   const records = await repository.pendingPublished(afterId);
-  for (const { id, replay_count: replayCount } of records) {
-    const job = await queue.getJob(deliveryJobId(id, replayCount));
+  for (const { id, channel, replay_count: replayCount } of records) {
+    const job = await queues[channel].getJob(deliveryJobId(id, replayCount));
     const state = job ? await job.getState() : "missing";
     if (!["failed", "missing", "completed"].includes(state)) {
       continue;

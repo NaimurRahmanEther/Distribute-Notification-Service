@@ -141,7 +141,7 @@ Ordinary immediate initial delivery is allowed to finish after reading. Work alr
 | NFR-03 | Validate external boundaries | Zod request and queue schemas; provider-specific input checks; body-size limits |
 | NFR-04 | Support maintainable code | CommonJS, named service/repository/middleware functions, route-to-repository layering, shared validation/async wrappers |
 | NFR-05 | Make failures diagnosable | Structured event logs, request IDs, retained database outcomes, admin metrics; no distributed tracing service |
-| NFR-06 | Bound local work | API/auth rate limits, worker concurrency, provider timeouts, finite delivery attempts, shutdown deadline |
+| NFR-06 | Bound local work | API/auth and per-channel job-start rate limits, worker concurrency validated against database pool capacity, provider timeouts, finite delivery attempts, shutdown deadline |
 | NFR-07 | Document evidence honestly | Record local checks separately from implemented but untested paths and external verification gaps |
 
 No benchmark establishes maximum users, throughput, delivery latency, or acceptable backlog. Establish workload and measurements before making those commitments.

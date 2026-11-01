@@ -69,7 +69,7 @@ async function finish(id, status, error, delayMs, providerMessageId, client) {
 
 async function pendingPublished(afterId = null) {
   const { rows } = await pool.query(
-    `SELECT d.id, d.replay_count FROM notification_deliveries d
+    `SELECT d.id, d.channel, d.replay_count FROM notification_deliveries d
      WHERE d.status IN ('PENDING', 'RETRYING', 'PROCESSING')
        AND ($1::uuid IS NULL OR d.id > $1::uuid)
        AND EXISTS (SELECT 1 FROM notification_outbox o

@@ -1,6 +1,6 @@
 # Technical Specification
 
-Baseline: 30 October 2026. This TSD describes implementation details. See [architecture](architecture.md) for flows, [client contracts](client-contracts.md) for HTTP/WebSocket integration, and [development](development-guide.md) for commands.
+Baseline: 30 October 2026; queue and database-capacity configuration updated 1 November 2026. This TSD describes implementation details. See [architecture](architecture.md) for flows, [client contracts](client-contracts.md) for HTTP/WebSocket integration, and [development](development-guide.md) for commands.
 
 ## 1. Technology baseline
 
@@ -85,15 +85,27 @@ Full DDL is in [database/migrations](../backend/src/database/migrations). Editin
 
 Provider work can run while a worker holds a database client and a delivery advisory lock. This coordinates delivery attempts but consumes pool capacity during external latency. There is no distributed transaction between PostgreSQL, Redis, and providers.
 
+Provider recipient lookup uses the delivery's existing client. It must not acquire another pool connection while holding the delivery lock. Schedule processing also passes its transaction client through its database calls.
+
 ## 4. Queue contracts
 
 | Queue | Job name | Identity | Retention |
 | --- | --- | --- | --- |
-| `notification-delivery` | `deliver-notification` | Delivery UUID; replay uses `<deliveryId>-replay-<count>` | Completed age 86400 seconds/count 1000; failed retained |
+| `notification-delivery-in-app` | `deliver-notification` | Delivery UUID; replay uses `<deliveryId>-replay-<count>` | Completed age 86400 seconds/count 1000; failed retained |
+| `notification-delivery-email` | `deliver-notification` | Same delivery/replay identity convention | Same completed/failed policy |
+| `notification-delivery-push` | `deliver-notification` | Same delivery/replay identity convention | Same completed/failed policy |
 | `notification-schedule` | `activate-notification-schedule` | Schedule UUID | Same completed/failed policy |
-| `notification-dead-letter` | `failed-delivery` | Dead-letter UUID | Completed and failed jobs retained |
+| `notification-dead-letter-in-app` | `failed-delivery` | Dead-letter UUID | Completed and failed jobs retained |
+| `notification-dead-letter-email` | `failed-delivery` | Dead-letter UUID | Same retention policy |
+| `notification-dead-letter-push` | `failed-delivery` | Dead-letter UUID | Same retention policy |
 
-The dead-letter queue has a producer but no consumer in this repository. Admin inspection and replay use PostgreSQL records, not removal/requeue of a dead-letter BullMQ job.
+There are seven queues. The outbox selects the delivery queue from the validated channel. Each delivery consumer enforces its channel against both the job and database record. Reconciliation checks that same channel queue. Fallback/replay creates outbox intent that follows the same routing.
+
+Each delivery channel has its own concurrency and Redis-backed job-start rate limit. Concurrency is per consumer process; rate limits for a given queue are shared across worker replicas. Defaults are 3 concurrent jobs per channel, with 100 IN_APP, 2 EMAIL, and 10 PUSH starts per 1000 milliseconds. Retries consume rate capacity. Push limits count delivery jobs, not individual device HTTP requests. A blocked email queue does not consume in-app consumer slots, but all consumers in one worker process share its database pool.
+
+Dead-letter queues have producers but no consumers in this repository. The failure dispatcher loads the delivery channel and publishes to the matching DLQ. Admin inspection and replay use PostgreSQL records, not removal/requeue of a dead-letter BullMQ job. Metrics report all seven queues.
+
+When upgrading from the old shared queues, stop the old publisher and drain `notification-delivery` with the old worker before switching both processes. Avoid mixing versions. Unpublished outbox intent routes to the new queues. Retained history in the legacy `notification-dead-letter` queue is not automatically moved. No SQL migration is required for this queue split.
 
 ### Delivery payload
 
@@ -111,7 +123,7 @@ The dead-letter queue has a producer but no consumer in this repository. Admin i
 
 UUID fields, version, channel, stage, replay bounds, strict keys, and `idempotencyKey === deliveryId` are validated. Replay count defaults to zero. Recipient, message, and actual processing policy come from PostgreSQL. A stale replay count is ignored. Invalid jobs fail unrecoverably.
 
-The schedule payload is `{ "version": 1, "scheduleId": "<UUID>" }`. A dead-letter payload contains `deadLetterId`, `deliveryId`, originating `jobId`, `replayCount`, `reason`, `attemptCount`, and ISO `failedAt`.
+The schedule payload is `{ "version": 1, "scheduleId": "<UUID>" }`. A dead-letter payload contains `deadLetterId`, `deliveryId`, `channel`, originating `jobId`, `replayCount`, `reason`, `attemptCount`, and ISO `failedAt`.
 
 ### Retry and publication details
 
@@ -166,6 +178,7 @@ Values below are source defaults unless marked otherwise. Root `.env` configures
 | `NODE_ENV` | Source: `development`; Compose fallback/container image: `production`; examples explicitly choose development |
 | `PORT` | API source: 3000, integer 1..65535; root Compose: public Nginx port default 8000, backend fixed at 3000 |
 | `DATABASE_URL` | Supply a valid PostgreSQL connection string; Compose constructs it from root database variables |
+| `DB_POOL_MAX` | 20 connections per process; integer 1..1000; must meet the combined worker-capacity requirement below |
 | `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` | Root Compose database settings; match direct Node URL to the same database |
 | `ACCESS_TOKEN_SECRET`, `REFRESH_TOKEN_SECRET` | Required by startup validation; at least 32 characters each; configure separate values |
 | `ACCESS_TOKEN_EXPIRES_IN` | `1d` |
@@ -189,7 +202,16 @@ Secrets `DATABASE_URL`, `ACCESS_TOKEN_SECRET`, `REFRESH_TOKEN_SECRET`, `RESEND_A
 | `REDIS_MAXMEMORY` | Compose 256mb; `noeviction`, append-only persistence |
 | `DELIVERY_MAX_ATTEMPTS` | 5; 1..20 |
 | `DELIVERY_BACKOFF_MS` | 1000; 1..60000 |
-| `WORKER_CONCURRENCY` | 3 per consumer; 1..5 |
+| `WORKER_CONCURRENCY` | Schedule consumer only: 3; 1..5 |
+| `IN_APP_WORKER_CONCURRENCY` | 3; 1..100; per worker process |
+| `IN_APP_WORKER_RATE_MAX` | 100 starts per interval; 1..1000000 |
+| `IN_APP_WORKER_RATE_DURATION_MS` | 1000; 1..86400000 |
+| `EMAIL_WORKER_CONCURRENCY` | 3; 1..100; per worker process |
+| `EMAIL_WORKER_RATE_MAX` | 2 starts per interval; 1..1000000 |
+| `EMAIL_WORKER_RATE_DURATION_MS` | 1000; 1..86400000 |
+| `PUSH_WORKER_CONCURRENCY` | 3; 1..100; per worker process |
+| `PUSH_WORKER_RATE_MAX` | 10 starts per interval; 1..1000000 |
+| `PUSH_WORKER_RATE_DURATION_MS` | 1000; 1..86400000 |
 | `DELIVERY_TIMEOUT_MS` | 10000; 1..60000 |
 | `OUTBOX_POLL_MS` | 1000; 1..60000 |
 | `SOCKET_ORIGINS` | Same localhost origins as CORS; independently configured |
@@ -199,7 +221,27 @@ Secrets `DATABASE_URL`, `ACCESS_TOKEN_SECRET`, `REFRESH_TOKEN_SECRET`, `RESEND_A
 
 Presence heartbeat guidance is `floor(PRESENCE_TTL_MS / 3)`. Redis prefix changes isolate presence/PubSub only; they do not rename BullMQ queues or rate-limit keys. Separate development environments should use separate Redis instances when full isolation is needed.
 
-Database pool per process: maximum 50 clients, idle timeout 30 seconds, connection timeout 5 seconds. API/auth Redis connection: 2-second connect/command timeout and one per-request retry. Queue producers disable the offline queue, use 2-second connect/5-second command timeouts and one per-request retry. Worker connections allow indefinite command retries as required by BullMQ. Real-time connections are lazy with 2-second connect/command timeouts.
+### Database capacity and concurrency
+
+Each process creates one lazy PostgreSQL pool capped by `DB_POOL_MAX`; idle timeout is 30 seconds and connection timeout is 5 seconds. Pools open connections on demand, not all at startup.
+
+The shared queue configuration rejects an unsafe pool/concurrency combination before consumers start:
+
+```text
+required pool capacity = IN_APP_WORKER_CONCURRENCY
+                       + EMAIL_WORKER_CONCURRENCY
+                       + PUSH_WORKER_CONCURRENCY
+                       + WORKER_CONCURRENCY
+                       + 2
+```
+
+One extra slot covers the worker's serial reconciliation/publication loop, which runs alongside consumers; the second provides headroom. Each delivery/schedule job uses at most one held database client because nested recipient lookups reuse it. Defaults allow 12 simultaneous consumer jobs and require at least 14 connections; the default pool of 20 leaves 8 slots beyond those consumer jobs. Increasing rates does not increase this connection budget; increasing concurrency does.
+
+Examples: 3/3/3 delivery concurrency plus 3 schedule concurrency fits a pool of 20. Raising delivery concurrency to 10/5/5 with schedule concurrency 3 requires a pool of at least 25. Either raise the pool within the database's overall capacity or lower concurrency. Startup fails rather than silently reducing configured concurrency. Shared queue configuration is imported by API/background processes, so keep the same valid settings across the stack.
+
+`DB_POOL_MAX` is not PostgreSQL `max_connections`. With the default single API, worker, and outbox, configured steady-state pool caps sum to 60. The migration process uses another pool while it runs, normally one connection. Replicas, direct Node processes, maintenance sessions, and other applications add their own connections. Budget these against the database's connection limit and reserve administrative capacity. The application neither changes PostgreSQL's limit nor automatically enlarges its pool when concurrency changes.
+
+API/auth Redis connection: 2-second connect/command timeout and one per-request retry. Queue producers disable the offline queue, use 2-second connect/5-second command timeouts and one per-request retry. Worker connections allow indefinite command retries as required by BullMQ. Real-time connections are lazy with 2-second connect/command timeouts.
 
 ### Providers and schedules
 

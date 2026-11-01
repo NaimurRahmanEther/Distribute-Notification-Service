@@ -1,6 +1,6 @@
 # Software Architecture and Design
 
-Baseline: 30 October 2026. This SDD describes the current development implementation. Product rules live in [requirements](requirements.md); schemas and settings live in the [technical specification](technical-specification.md).
+Baseline: 30 October 2026; channel queues and database-capacity design updated 1 November 2026. This SDD describes the current development implementation. Product rules live in [requirements](requirements.md); schemas and settings live in the [technical specification](technical-specification.md).
 
 ## 1. System context
 
@@ -31,14 +31,16 @@ In direct Node development, clients can reach the API on port 3000 without Nginx
 | Process/service | Entry point | Responsibility |
 | --- | --- | --- |
 | API | `backend/src/server.js` | HTTP, Socket.IO, session/ownership checks, request validation, health, metrics |
-| Worker | `backend/src/workers/notification-worker.js` | Delivery consumer, schedule consumer, delivery reconciliation, schedule publication, dead-letter publication |
+| Worker | `backend/src/workers/notification-worker.js` | Three channel-specific delivery consumers, one schedule consumer, delivery reconciliation, schedule publication, channel-specific dead-letter publication |
 | Outbox | `backend/src/workers/outbox.js` | Poll durable delivery intent and publish BullMQ jobs |
 | Migration job | `backend/src/database/migrate.js` | Apply named SQL migrations before API startup |
 | PostgreSQL | Compose `postgres` | Users, sessions, inbox, preferences, delivery state, outbox, schedules, device outcomes, failures |
 | Redis | Compose `redis` | BullMQ, rate-limit counters, ephemeral presence, real-time Pub/Sub |
 | Nginx | `infra/nginx/nginx.conf` | HTTP/WebSocket forwarding, request IDs, controlled forwarded headers |
 
-Worker delivery and schedule consumers each use the configured concurrency. A value of 3 is not a single combined cap of three jobs across both consumers. Reconciliation/publication loops also perform work.
+Each delivery channel has independent concurrency and a Redis-backed job-start rate limit. The schedule consumer uses `WORKER_CONCURRENCY`. With defaults of 3 for all four consumers, the worker can run 12 jobs concurrently. Concurrency is per process; each channel's rate limit is shared across replicas. The serial reconciliation/publication loop also runs alongside consumers.
+
+All four consumers in one process share its PostgreSQL pool. `DB_POOL_MAX` defaults to 20. Startup requires the sum of the four concurrency values plus 2 to fit the pool, reserving one connection for background work and one spare. Provider recipient lookups reuse the delivery's client, so they do not require a second held connection. See [capacity budgeting](technical-specification.md#database-capacity-and-concurrency) before increasing concurrency or process counts.
 
 ## 3. Code boundaries
 
@@ -83,8 +85,8 @@ sequenceDiagram
   participant A as API service
   participant D as PostgreSQL
   participant O as Outbox process
-  participant Q as Redis/BullMQ
-  participant W as Delivery worker
+  participant Q as Selected channel queue
+  participant W as Matching delivery consumer
   participant P as Provider
   C->>A: POST notification + optional requestId
   A->>D: BEGIN; serialize same user/requestId if present
@@ -186,3 +188,13 @@ Each process installs SIGINT/SIGTERM handling through `shared/utils/shutdown.js`
 | Temporary verification files only | Follow repository working instructions | No retained automated regression suite; repeat verification when behavior changes |
 
 Future changes should preserve these guarantees or explicitly update the corresponding requirement and verification record.
+
+### Channel queue rollout
+
+The outbox routes `DELIVERY_REQUESTED` by channel to `notification-delivery-in-app`, `notification-delivery-email`, or `notification-delivery-push`. Recovery checks the matching channel queue; fallback events follow the same routing. Real-time Pub/Sub is unchanged and remains separate from BullMQ queues.
+
+Each channel prefix (`IN_APP`, `EMAIL`, `PUSH`) accepts `_WORKER_CONCURRENCY`, `_WORKER_RATE_MAX`, and `_WORKER_RATE_DURATION_MS`. Default limits are respectively 100, 2, and 10 starts per 1000ms. Excess jobs wait; retries consume capacity. Limits count job starts, not HTTP requests: one push job can contact multiple devices. The [technical specification](technical-specification.md#4-queue-contracts) lists all seven queues and exact settings.
+
+Rollout: stop the old outbox publisher and drain `notification-delivery` with the old worker before switching both processes. Avoid running old and new versions together. Unpublished outbox rows automatically route to the new queues.
+
+Each channel has a dedicated DLQ: `notification-dead-letter-in-app`, `notification-dead-letter-email`, and `notification-dead-letter-push`. The failure dispatcher joins each durable failure to its delivery channel and publishes to that channel's DLQ. Metrics include all three DLQs. The existing admin listing and replay API still use PostgreSQL and replay through the delivery outbox. Existing records in the legacy `notification-dead-letter` Redis queue remain there; retain that queue for historical inspection. No database migration is required.
